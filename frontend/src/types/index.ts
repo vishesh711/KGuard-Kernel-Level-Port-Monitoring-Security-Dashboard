@@ -1,0 +1,153 @@
+// KGuard Frontend Type Definitions
+
+export interface NetworkEvent {
+  id: number
+  timestamp: number
+  created_at: string
+  src_ip: string
+  dst_ip: string
+  src_port: number
+  dst_port: number
+  protocol: string
+  flags: number
+  is_suspicious: boolean
+  event_type: string
+}
+
+export interface SecurityAlert {
+  id: number
+  timestamp: string
+  created_at: string
+  alert_type: AlertType
+  severity: AlertSeverity
+  title: string
+  description: string
+  src_ip?: string
+  dst_ip?: string
+  dst_port?: number
+  related_event_ids?: number[]
+  metadata?: Record<string, any>
+  acknowledged: boolean
+  acknowledged_at?: string
+  acknowledged_by?: string
+  resolved: boolean
+  resolved_at?: string
+  resolution_notes?: string
+}
+
+export type AlertType = 
+  | 'PORT_SCAN'
+  | 'BRUTE_FORCE'
+  | 'SUSPICIOUS_PORT'
+  | 'HIGH_FREQUENCY'
+  | 'UNUSUAL_TRAFFIC'
+  | 'UNKNOWN_PROTOCOL'
+
+export type AlertSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
+
+export interface SystemMetric {
+  id: number
+  timestamp: string
+  metric_name: string
+  metric_category: string
+  value: number
+  unit?: string
+  source?: string
+  tags?: string
+}
+
+export interface NetworkEventStats {
+  total_events: number
+  suspicious_events: number
+  unique_src_ips: number
+  unique_dst_ips: number
+  protocol_distribution: Record<string, number>
+  top_src_ips: Array<{ ip: string; count: number }>
+  top_dst_ports: Array<{ port: number; count: number }>
+  events_per_hour: Array<{ hour: string; count: number }>
+}
+
+export interface AlertStats {
+  total_alerts: number
+  unacknowledged_alerts: number
+  unresolved_alerts: number
+  critical_alerts: number
+  high_alerts: number
+  medium_alerts: number
+  low_alerts: number
+  alert_types_distribution: Record<string, number>
+  alerts_per_hour: Array<{ hour: string; count: number }>
+  top_source_ips: Array<{ ip: string; count: number }>
+}
+
+export interface TrafficSummary {
+  timestamp: string
+  total_packets: number
+  tcp_packets: number
+  udp_packets: number
+  icmp_packets: number
+  unique_connections: number
+  suspicious_activity: number
+}
+
+export interface HealthCheck {
+  status: string
+  timestamp: string
+  version: string
+  database: boolean
+  kernel_module: boolean
+  uptime_seconds: number
+}
+
+export interface PaginatedResponse<T> {
+  items: T[]
+  total: number
+  page: number
+  size: number
+  pages: number
+}
+
+export interface WebSocketMessage {
+  type: string
+  data: any
+  timestamp: string
+}
+
+export interface ConnectionStatus {
+  connected: boolean
+  reconnecting: boolean
+  error?: string
+  lastConnected?: Date
+}
+
+export interface FilterOptions {
+  src_ip?: string
+  dst_ip?: string
+  src_port?: number
+  dst_port?: number
+  protocol?: string
+  is_suspicious?: boolean
+  start_time?: Date
+  end_time?: Date
+}
+
+export interface AlertFilterOptions {
+  alert_type?: AlertType
+  severity?: AlertSeverity
+  src_ip?: string
+  acknowledged?: boolean
+  resolved?: boolean
+  start_time?: Date
+  end_time?: Date
+}
+
+export interface ChartDataPoint {
+  name: string
+  value: number
+  timestamp?: string
+}
+
+export interface TimeSeriesData {
+  timestamp: string
+  [key: string]: string | number
+}

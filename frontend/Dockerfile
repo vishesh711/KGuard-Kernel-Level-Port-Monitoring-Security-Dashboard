@@ -11,7 +11,7 @@ COPY package*.json ./
 FROM base as development
 
 # Install all dependencies (including dev dependencies)
-RUN npm ci
+RUN npm install
 
 # Copy source code
 COPY . .
@@ -26,7 +26,7 @@ CMD ["npm", "run", "dev", "--", "--host"]
 FROM base as build
 
 # Install dependencies
-RUN npm ci --only=production && npm cache clean --force
+RUN npm install --only=production && npm cache clean --force
 
 # Copy source code
 COPY . .

@@ -9,6 +9,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl \
+    gcc \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app user
@@ -48,9 +50,10 @@ FROM base as production
 # Copy application code
 COPY . .
 
-# Create data directory
+# Create data directory with proper permissions
 RUN mkdir -p /app/data /app/logs && \
-    chown -R app:app /app
+    chown -R app:app /app && \
+    chmod 755 /app/data
 
 # Switch to app user
 USER app
