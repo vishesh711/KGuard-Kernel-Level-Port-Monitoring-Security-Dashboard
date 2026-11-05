@@ -12,6 +12,8 @@ import time
 _TMP = tempfile.mkdtemp(prefix="kguard-test-")
 os.environ["DATABASE_URL"] = f"sqlite:///{_TMP}/kguard-test.db"
 os.environ["PROC_KGUARD_PATH"] = f"{_TMP}/kguard"
+# No device by default, so "auto" falls back to the fake /proc file
+os.environ["KGUARD_DEVICE_PATH"] = f"{_TMP}/kguard-dev"
 os.environ["DEBUG"] = "true"
 # Keep the background collector idle; tests run collection cycles themselves
 os.environ["DATA_COLLECTION_INTERVAL"] = "3600"
@@ -104,11 +106,23 @@ def clean_state():
         for table in reversed(Base.metadata.sorted_tables):
             conn.execute(table.delete())
     anomaly_detector.reset()
+    data_collector.close_device()
+    data_collector.active_source = None
     data_collector.stats.update(
         events_collected=0, events_stored=0, alerts_generated=0,
         kernel_events_dropped=0, errors=0, last_collection=None,
     )
     yield
+
+
+@pytest.fixture
+def fake_device():
+    """Path for a fake /dev/kguard (a file with the same mmap layout)"""
+    path = os.environ["KGUARD_DEVICE_PATH"]
+    yield path
+    data_collector.close_device()
+    if os.path.exists(path):
+        os.remove(path)
 
 
 @pytest.fixture

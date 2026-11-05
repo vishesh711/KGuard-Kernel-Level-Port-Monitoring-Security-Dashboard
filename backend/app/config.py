@@ -42,7 +42,15 @@ class Settings(BaseSettings):
     log_format: str = "json"
 
     # Kernel Module Interface
+    # Where events come from: "device" (/dev/kguard, zero-copy mmap),
+    # "proc" (/proc/kguard JSON) or "auto" (device if available, else proc)
+    kguard_source: str = "auto"
+    kguard_device_path: str = "/dev/kguard"
     proc_kguard_path: str = "/proc/kguard"
+    # Look up which process owns each socket (needs the host's /proc; in
+    # Docker that means pid: host)
+    resolve_processes: bool = True
+    proc_root: str = "/proc"
     data_collection_interval: float = 1.0
 
     # Anomaly Detection

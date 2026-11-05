@@ -34,6 +34,8 @@ async def get_events(
     dst_port: Optional[int] = Query(None, ge=0, le=65535, description="Filter by destination port"),
     protocol: Optional[str] = Query(None, description="Filter by protocol"),
     is_suspicious: Optional[bool] = Query(None, description="Filter by suspicious flag"),
+    direction: Optional[str] = Query(None, pattern="^(in|out|fwd)$", description="Filter by direction"),
+    process_name: Optional[str] = Query(None, description="Filter by process name"),
     start_time: Optional[datetime] = Query(None, description="Start time filter"),
     end_time: Optional[datetime] = Query(None, description="End time filter"),
     db: Session = Depends(get_db)
@@ -57,6 +59,10 @@ async def get_events(
             query = query.filter(NetworkEvent.protocol == protocol)
         if is_suspicious is not None:
             query = query.filter(NetworkEvent.is_suspicious == is_suspicious)
+        if direction:
+            query = query.filter(NetworkEvent.direction == direction)
+        if process_name:
+            query = query.filter(NetworkEvent.process_name == process_name)
         if start_time:
             query = query.filter(NetworkEvent.created_at >= start_time)
         if end_time:

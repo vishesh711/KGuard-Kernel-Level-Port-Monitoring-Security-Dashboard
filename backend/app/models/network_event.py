@@ -6,7 +6,7 @@ captured by the kernel module.
 """
 
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, Index, Integer, String
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, Index, Integer, SmallInteger, String
 from sqlalchemy.sql import func
 
 from ..database import Base
@@ -47,6 +47,19 @@ class NetworkEvent(Base):
     flags = Column(Integer, default=0,
                   comment="Protocol-specific flags")
 
+    # Context from the kernel module (v2); empty when not known
+    family = Column(SmallInteger, nullable=True, comment="IP version: 4 or 6")
+    direction = Column(String(8), nullable=True, index=True,
+                       comment="in (to this host), out (from it) or fwd (routed)")
+    ct_state = Column(String(12), nullable=True,
+                      comment="Connection tracking state: new, established, related, invalid, ...")
+    netns = Column(BigInteger, nullable=True, comment="Network namespace inode number")
+    ifindex = Column(Integer, nullable=True, comment="Interface index")
+    pid = Column(Integer, nullable=True, comment="Process that sent or owns the connection")
+    process_name = Column(String(16), nullable=True, comment="Name of that process")
+    uid = Column(BigInteger, nullable=True, comment="User that owns the socket")
+    sock_ino = Column(BigInteger, nullable=True, comment="Socket inode number")
+
     # Classification
     is_suspicious = Column(Boolean, default=False, index=True,
                           comment="Whether this event was flagged as suspicious")
@@ -81,7 +94,16 @@ class NetworkEvent(Base):
             "protocol": self.protocol,
             "flags": self.flags,
             "is_suspicious": self.is_suspicious,
-            "event_type": self.event_type
+            "event_type": self.event_type,
+            "family": self.family,
+            "direction": self.direction,
+            "ct_state": self.ct_state,
+            "netns": self.netns,
+            "ifindex": self.ifindex,
+            "pid": self.pid,
+            "process_name": self.process_name,
+            "uid": self.uid,
+            "sock_ino": self.sock_ino,
         }
 
     @classmethod

@@ -33,6 +33,15 @@ class NetworkEventResponse(NetworkEventBase):
     created_at: datetime = Field(..., description="Database insertion timestamp")
     is_suspicious: bool = Field(..., description="Whether event is suspicious")
     event_type: str = Field(..., description="Event classification type")
+    family: Optional[int] = Field(None, description="IP version (4 or 6)")
+    direction: Optional[str] = Field(None, description="in, out or fwd")
+    ct_state: Optional[str] = Field(None, description="Connection tracking state")
+    netns: Optional[int] = Field(None, description="Network namespace inode number")
+    ifindex: Optional[int] = Field(None, description="Interface index")
+    pid: Optional[int] = Field(None, description="Process that sent or owns the connection")
+    process_name: Optional[str] = Field(None, description="Name of that process")
+    uid: Optional[int] = Field(None, description="User that owns the socket")
+    sock_ino: Optional[int] = Field(None, description="Socket inode number")
 
     model_config = ConfigDict(from_attributes=True)
 

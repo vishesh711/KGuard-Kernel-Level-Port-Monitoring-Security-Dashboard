@@ -52,7 +52,13 @@ class Attempt:
 
 
 def is_connection_attempt(event: NetworkEvent) -> bool:
-    """True for a TCP SYN without ACK, or any UDP packet"""
+    """
+    True for a TCP SYN without ACK, or any UDP packet, arriving at or routed
+    through this host. Outgoing copies are skipped so that local traffic
+    (seen once leaving and once arriving) is not counted twice.
+    """
+    if getattr(event, "direction", None) == "out":
+        return False
     if event.protocol == "TCP":
         flags = event.flags or 0
         return bool(flags & TCP_SYN) and not (flags & TCP_ACK)

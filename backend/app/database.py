@@ -7,7 +7,7 @@ Sets up the SQLAlchemy engine and session factory.
 import logging
 from typing import Generator
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -47,12 +47,41 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
-    """Create database tables"""
+    """Create database tables, and add columns that newer versions introduced"""
     # Import models so they register with Base.metadata
     from . import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _add_missing_columns()
     logger.info("Database tables created successfully")
+
+
+def _add_missing_columns() -> None:
+    """
+    create_all() never alters existing tables, so a database made by an older
+    version would lack newer columns. Add any missing nullable column.
+    (Stopgap until Alembic migrations are in place: roadmap S6.1.)
+    """
+    inspector = inspect(engine)
+    quote = engine.dialect.identifier_preparer.quote
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if not inspector.has_table(table.name):
+                continue
+            existing = {column["name"] for column in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in existing:
+                    continue
+                if not column.nullable:
+                    logger.warning(
+                        f"Cannot add required column {table.name}.{column.name}; recreate the table"
+                    )
+                    continue
+                column_type = column.type.compile(dialect=engine.dialect)
+                conn.execute(text(
+                    f"ALTER TABLE {quote(table.name)} ADD COLUMN {quote(column.name)} {column_type}"
+                ))
+                logger.info(f"Added column {table.name}.{column.name}")
 
 
 def check_db_connection() -> bool:
