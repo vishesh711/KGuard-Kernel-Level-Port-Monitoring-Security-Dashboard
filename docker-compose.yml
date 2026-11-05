@@ -18,6 +18,10 @@ services:
       - LOG_LEVEL=DEBUG
     depends_on:
       - redis
+    # Lets the non-root container user read /proc/kguard. Load the module with
+    # the same group: sudo insmod kernel/kguard.ko reader_gid=1500
+    group_add:
+      - "${KGUARD_READER_GID:-1500}"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]

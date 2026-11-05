@@ -30,7 +30,15 @@ make
 
 # Clean build artifacts
 make clean
+
+# Build against a different kernel tree
+make KDIR=/path/to/kernel/build
+
+# Check kernel coding style (strict checkpatch)
+make checkpatch
 ```
+
+The build treats every compiler warning as an error.
 
 ## Usage
 
@@ -42,6 +50,9 @@ sudo make install
 # or
 sudo insmod kguard.ko
 
+# Choose how many events the buffer holds (64 to 1048576, default 65536)
+sudo insmod kguard.ko buffer_size=262144
+
 # Verify module is loaded
 make status
 # or
@@ -51,12 +62,32 @@ lsmod | grep kguard
 ### Reading Data
 
 ```bash
-# Read captured network events
-cat /proc/kguard
-
-# Monitor in real-time
-tail -f /proc/kguard
+# Read and remove the queued network events (root only)
+sudo cat /proc/kguard
 ```
+
+Reading `/proc/kguard` **removes** the events it returns, so only one program
+should read it: normally the KGuard backend. Each open takes every queued event
+into a private copy, so an event is never lost part-way through a read.
+
+The file is readable by root only (mode 0400), because reading it consumes
+events. To let one non-root reader in (for example the backend's Docker
+container, which runs as an unprivileged user), load the module with a group
+ID; the file then becomes 0440, owned by that group:
+
+```bash
+sudo insmod kguard.ko reader_gid=1500
+```
+
+The Docker Compose files add group 1500 to the backend container (override
+with `KGUARD_READER_GID`).
+
+### Module parameters
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `buffer_size` | 65536 | Events the buffer can hold (64 to 1048576) |
+| `reader_gid` | -1 | Group allowed to read `/proc/kguard`; -1 means root only |
 
 ### Unloading the Module
 
@@ -69,19 +100,22 @@ sudo rmmod kguard
 
 ## Data Format
 
-The module outputs JSON-formatted network events:
+Each read returns one JSON document, with one event per line:
 
 ```json
-{
-  "timestamp": 1635789123456789,
-  "src_ip": "192.168.1.100",
-  "dst_ip": "10.0.0.1",
-  "src_port": 45678,
-  "dst_port": 80,
-  "protocol": "TCP",
-  "flags": 2
-}
+{"dropped": 0, "events": [
+{"timestamp": 1762380000123456789, "src_ip": "192.168.1.100", "dst_ip": "10.0.0.1", "src_port": 45678, "dst_port": 80, "protocol": "TCP", "flags": 2}
+]}
 ```
+
+| Field | Meaning |
+|---|---|
+| `dropped` | Events overwritten because the buffer was full, since the module loaded. Above 0 means raise `buffer_size` or read more often. |
+| `timestamp` | Wall-clock time in nanoseconds since the Unix epoch |
+| `protocol` | `TCP`, `UDP`, `ICMP` or `OTHER` |
+| `flags` | TCP flags: FIN `0x01`, SYN `0x02`, RST `0x04`, PSH `0x08`, ACK `0x10`, URG `0x20` |
+
+Ports are 0 for protocols without ports and for non-first IP fragments.
 
 ## Troubleshooting
 

@@ -1,6 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * KGuard Kernel Module - Netfilter Hook Implementation
- * 
+ *
  * This file implements the Netfilter hooks for intercepting network packets
  * and extracting relevant metadata for security monitoring.
  */
@@ -15,86 +16,69 @@ static struct nf_hook_ops kguard_nf_ops;
  * Called for each packet that matches our hook registration
  */
 unsigned int kguard_netfilter_hook(void *priv, struct sk_buff *skb,
-                                   const struct nf_hook_state *state)
+				   const struct nf_hook_state *state)
 {
-    struct iphdr *ip_header;
-    struct tcphdr *tcp_header;
-    struct udphdr *udp_header;
-    struct kguard_event event;
-    int ret;
+	const struct iphdr *ip_header;
+	struct kguard_event event;
+	unsigned int l4_offset;
 
-    /* Basic packet validation */
-    if (!skb) {
-        return NF_ACCEPT;
-    }
+	if (!skb)
+		return NF_ACCEPT;
 
-    /* Get IP header */
-    ip_header = ip_hdr(skb);
-    if (!ip_header) {
-        return NF_ACCEPT;
-    }
+	/* The IP stack has already validated and pulled the IP header */
+	ip_header = ip_hdr(skb);
+	if (!ip_header)
+		return NF_ACCEPT;
 
-    /* Validate IP header length */
-    if (skb->len < sizeof(struct iphdr)) {
-        return NF_ACCEPT;
-    }
+	memset(&event, 0, sizeof(event));
+	event.timestamp = kguard_get_timestamp();
+	event.src_ip = ntohl(ip_header->saddr);
+	event.dst_ip = ntohl(ip_header->daddr);
+	event.protocol = ip_header->protocol;
 
-    /* Initialize event structure */
-    memset(&event, 0, sizeof(event));
-    event.timestamp = kguard_get_timestamp();
-    event.src_ip = ntohl(ip_header->saddr);
-    event.dst_ip = ntohl(ip_header->daddr);
-    event.protocol = ip_header->protocol;
+	/*
+	 * Ports only exist in the first fragment. Transport headers may sit in
+	 * non-linear packet data, so copy them out with skb_header_pointer()
+	 * instead of dereferencing them in place.
+	 */
+	l4_offset = skb_network_offset(skb) + ip_hdrlen(skb);
+	if (!(ntohs(ip_header->frag_off) & IP_OFFSET)) {
+		switch (ip_header->protocol) {
+		case IPPROTO_TCP: {
+			struct tcphdr tcp_buf;
+			const struct tcphdr *th;
 
-    /* Extract port information based on protocol */
-    switch (ip_header->protocol) {
-    case IPPROTO_TCP:
-        if (skb->len >= sizeof(struct iphdr) + sizeof(struct tcphdr)) {
-            tcp_header = tcp_hdr(skb);
-            if (tcp_header) {
-                event.src_port = ntohs(tcp_header->source);
-                event.dst_port = ntohs(tcp_header->dest);
-                event.flags = tcp_header->syn ? 0x02 : 0;
-                event.flags |= tcp_header->ack ? 0x10 : 0;
-                event.flags |= tcp_header->fin ? 0x01 : 0;
-                event.flags |= tcp_header->rst ? 0x04 : 0;
-            }
-        }
-        break;
+			th = skb_header_pointer(skb, l4_offset, sizeof(tcp_buf), &tcp_buf);
+			if (th) {
+				event.src_port = ntohs(th->source);
+				event.dst_port = ntohs(th->dest);
+				event.flags = (th->fin ? 0x01 : 0) | (th->syn ? 0x02 : 0) |
+					      (th->rst ? 0x04 : 0) | (th->psh ? 0x08 : 0) |
+					      (th->ack ? 0x10 : 0) | (th->urg ? 0x20 : 0);
+			}
+			break;
+		}
+		case IPPROTO_UDP: {
+			struct udphdr udp_buf;
+			const struct udphdr *uh;
 
-    case IPPROTO_UDP:
-        if (skb->len >= sizeof(struct iphdr) + sizeof(struct udphdr)) {
-            udp_header = udp_hdr(skb);
-            if (udp_header) {
-                event.src_port = ntohs(udp_header->source);
-                event.dst_port = ntohs(udp_header->dest);
-                event.flags = 0; /* UDP has no flags */
-            }
-        }
-        break;
+			uh = skb_header_pointer(skb, l4_offset, sizeof(udp_buf), &udp_buf);
+			if (uh) {
+				event.src_port = ntohs(uh->source);
+				event.dst_port = ntohs(uh->dest);
+			}
+			break;
+		}
+		default:
+			/* ICMP and other protocols have no ports */
+			break;
+		}
+	}
 
-    case IPPROTO_ICMP:
-        event.src_port = 0;
-        event.dst_port = 0;
-        event.flags = 0;
-        break;
+	kguard_buffer_add_event(&event);
 
-    default:
-        /* For other protocols, we still capture IP information */
-        event.src_port = 0;
-        event.dst_port = 0;
-        event.flags = 0;
-        break;
-    }
-
-    /* Add event to buffer */
-    ret = kguard_buffer_add_event(&event);
-    if (ret) {
-        kguard_debug("Failed to add event to buffer: %d", ret);
-    }
-
-    /* Always accept the packet - we're just monitoring */
-    return NF_ACCEPT;
+	/* Always accept the packet - KGuard only observes */
+	return NF_ACCEPT;
 }
 
 /*
@@ -103,23 +87,23 @@ unsigned int kguard_netfilter_hook(void *priv, struct sk_buff *skb,
  */
 int kguard_netfilter_init(void)
 {
-    int ret;
+	int ret;
 
-    /* Initialize hook operations structure */
-    kguard_nf_ops.hook = kguard_netfilter_hook;
-    kguard_nf_ops.pf = PF_INET;                    /* IPv4 */
-    kguard_nf_ops.hooknum = NF_INET_PRE_ROUTING;   /* Pre-routing hook */
-    kguard_nf_ops.priority = NF_IP_PRI_FIRST;      /* High priority */
+	/* Initialize hook operations structure */
+	kguard_nf_ops.hook = kguard_netfilter_hook;
+	kguard_nf_ops.pf = PF_INET;                    /* IPv4 */
+	kguard_nf_ops.hooknum = NF_INET_PRE_ROUTING;   /* Pre-routing hook */
+	kguard_nf_ops.priority = NF_IP_PRI_FIRST;      /* High priority */
 
-    /* Register the hook */
-    ret = nf_register_net_hook(&init_net, &kguard_nf_ops);
-    if (ret) {
-        kguard_err("Failed to register Netfilter hook: %d", ret);
-        return ret;
-    }
+	/* Register the hook */
+	ret = nf_register_net_hook(&init_net, &kguard_nf_ops);
+	if (ret) {
+		kguard_err("Failed to register Netfilter hook: %d", ret);
+		return ret;
+	}
 
-    kguard_debug("Netfilter hook registered successfully");
-    return 0;
+	kguard_debug("Netfilter hook registered successfully");
+	return 0;
 }
 
 /*
@@ -128,7 +112,7 @@ int kguard_netfilter_init(void)
  */
 void kguard_netfilter_cleanup(void)
 {
-    /* Unregister the hook */
-    nf_unregister_net_hook(&init_net, &kguard_nf_ops);
-    kguard_debug("Netfilter hook unregistered");
+	/* Unregister the hook */
+	nf_unregister_net_hook(&init_net, &kguard_nf_ops);
+	kguard_debug("Netfilter hook unregistered");
 }
