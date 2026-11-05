@@ -30,7 +30,7 @@ apiClient.interceptors.request.use(
   },
   (error) => {
     return Promise.reject(error)
-  }
+  },
 )
 
 // Response interceptor
@@ -40,7 +40,7 @@ apiClient.interceptors.response.use(
   },
   (error) => {
     console.error('API Error:', error)
-    
+
     // Handle common errors
     if (error.response?.status === 401) {
       // Handle unauthorized
@@ -48,18 +48,20 @@ apiClient.interceptors.response.use(
       // Handle server errors
       console.error('Server error:', error.response.data)
     }
-    
+
     return Promise.reject(error)
-  }
+  },
 )
 
 export const api = {
   // Network Events
-  async getEvents(params: {
-    page?: number
-    size?: number
-    filters?: FilterOptions
-  } = {}): Promise<PaginatedResponse<NetworkEvent>> {
+  async getEvents(
+    params: {
+      page?: number
+      size?: number
+      filters?: FilterOptions
+    } = {},
+  ): Promise<PaginatedResponse<NetworkEvent>> {
     const { page = 1, size = 25, filters = {} } = params
     const response = await apiClient.get('/api/events/', {
       params: {
@@ -91,11 +93,13 @@ export const api = {
   },
 
   // Security Alerts
-  async getAlerts(params: {
-    page?: number
-    size?: number
-    filters?: AlertFilterOptions
-  } = {}): Promise<PaginatedResponse<SecurityAlert>> {
+  async getAlerts(
+    params: {
+      page?: number
+      size?: number
+      filters?: AlertFilterOptions
+    } = {},
+  ): Promise<PaginatedResponse<SecurityAlert>> {
     const { page = 1, size = 25, filters = {} } = params
     const response = await apiClient.get('/api/alerts/', {
       params: {

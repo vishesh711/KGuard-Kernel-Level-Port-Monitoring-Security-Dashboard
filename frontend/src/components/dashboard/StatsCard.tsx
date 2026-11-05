@@ -10,14 +10,14 @@ interface StatsCardProps {
   trend?: string
 }
 
-export function StatsCard({ 
-  title, 
-  value, 
-  icon: Icon, 
-  loading = false, 
-  subtitle, 
+export function StatsCard({
+  title,
+  value,
+  icon: Icon,
+  loading = false,
+  subtitle,
   color = 'primary',
-  trend 
+  trend,
 }: StatsCardProps) {
   const getColorClasses = () => {
     switch (color) {
@@ -43,16 +43,10 @@ export function StatsCard({
           </div>
           <div className="ml-5 w-0 flex-1">
             <dl>
-              <dt className="text-sm font-medium text-gray-500 truncate">
-                {title}
-              </dt>
+              <dt className="text-sm font-medium text-gray-500 truncate">{title}</dt>
               <dd className="flex items-baseline">
                 <div className="text-2xl font-semibold text-gray-900">
-                  {loading ? (
-                    <div className="h-8 w-16 bg-gray-200 rounded animate-pulse"></div>
-                  ) : (
-                    value
-                  )}
+                  {loading ? <div className="h-8 w-16 bg-gray-200 rounded animate-pulse"></div> : value}
                 </div>
                 {trend && (
                   <div className="ml-2 flex items-baseline text-sm font-semibold text-success-600">
@@ -60,11 +54,7 @@ export function StatsCard({
                   </div>
                 )}
               </dd>
-              {subtitle && (
-                <dd className="text-sm text-gray-500">
-                  {subtitle}
-                </dd>
-              )}
+              {subtitle && <dd className="text-sm text-gray-500">{subtitle}</dd>}
             </dl>
           </div>
         </div>

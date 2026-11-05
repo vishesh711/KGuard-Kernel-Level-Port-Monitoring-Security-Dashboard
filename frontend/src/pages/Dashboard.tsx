@@ -1,3 +1,4 @@
+import { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ShieldCheckIcon,
@@ -5,268 +6,190 @@ import {
   EyeIcon,
   ServerIcon,
   ChartBarIcon,
-  ClockIcon
+  ClockIcon,
 } from '@heroicons/react/24/outline'
+import { StatsCard } from '../components/dashboard/StatsCard'
+import { RecentEvents } from '../components/dashboard/RecentEvents'
+import { RecentAlerts } from '../components/dashboard/RecentAlerts'
+import { TrafficChart } from '../components/charts/TrafficChart'
+import { ProtocolChart } from '../components/charts/ProtocolChart'
+import { useLiveStatus } from '../context/liveStatus'
+import {
+  useAlertStats,
+  useEventStats,
+  useHealth,
+  useRecentAlerts,
+  useRecentEvents,
+  useTrafficSummary,
+} from '../hooks/queries'
+import { formatUptime } from '../lib/time'
 
-// Simple StatsCard component
-interface StatsCardProps {
+function Panel({
+  title,
+  icon,
+  link,
+  children,
+}: {
   title: string
-  value: string | number
-  icon: React.ComponentType<{ className?: string }>
-  loading?: boolean
-  subtitle?: string
-  color?: 'primary' | 'success' | 'warning' | 'danger'
-}
-
-function StatsCard({ 
-  title, 
-  value, 
-  icon: Icon, 
-  loading, 
-  subtitle, 
-  color = 'primary' 
-}: StatsCardProps) {
-  const getColorClasses = () => {
-    switch (color) {
-      case 'success':
-        return 'text-green-600 bg-green-50'
-      case 'warning':
-        return 'text-yellow-600 bg-yellow-50'
-      case 'danger':
-        return 'text-red-600 bg-red-50'
-      default:
-        return 'text-blue-600 bg-blue-50'
-    }
-  }
-
+  icon: ReactNode
+  link?: string
+  children: ReactNode
+}) {
   return (
     <div className="card">
-      <div className="card-content">
-        <div className="flex items-center">
-          <div className="flex-shrink-0">
-            <div className={`inline-flex items-center justify-center p-3 rounded-lg ${getColorClasses()}`}>
-              <Icon className="h-6 w-6" aria-hidden="true" />
-            </div>
+      <div className="card-header">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            {icon}
+            <h3 className="text-lg font-medium text-gray-900">{title}</h3>
           </div>
-          <div className="ml-5 w-0 flex-1">
-            <dl>
-              <dt className="text-sm font-medium text-gray-500 truncate">
-                {title}
-              </dt>
-              <dd className="flex items-baseline">
-                <div className="text-2xl font-semibold text-gray-900">
-                  {loading ? (
-                    <div className="h-8 w-16 bg-gray-200 rounded animate-pulse"></div>
-                  ) : (
-                    value
-                  )}
-                </div>
-              </dd>
-              {subtitle && (
-                <dd className="text-sm text-gray-500">
-                  {subtitle}
-                </dd>
-              )}
-            </dl>
-          </div>
+          {link && (
+            <Link to={link} className="text-sm text-blue-600 hover:text-blue-700">
+              View all
+            </Link>
+          )}
         </div>
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function StatusDot({ ok, label, detail }: { ok: boolean; label: string; detail: string }) {
+  return (
+    <div className="flex items-center space-x-3">
+      <div className={`h-3 w-3 rounded-full ${ok ? 'bg-green-500' : 'bg-red-500'}`}></div>
+      <div>
+        <p className="text-sm font-medium text-gray-900">{label}</p>
+        <p className="text-xs text-gray-500">{detail}</p>
       </div>
     </div>
   )
 }
 
-export function Dashboard() {
-  // Mock data for demonstration - replace with real API calls when backend is ready
-  const connectionStatus = { connected: false, reconnecting: false }
-  const eventStats = { total_events: 1234, suspicious_events: 23 }
-  const alertStats = { unresolved_alerts: 5, critical_alerts: 1, high_alerts: 2 }
-  const health = { 
-    status: 'healthy', 
-    database: true, 
-    kernel_module: true, 
-    uptime_seconds: 86400 
-  }
-  const eventsLoading = false
-  const alertsLoading = false
+function Loading() {
+  return <div className="h-64 animate-pulse rounded bg-gray-100" />
+}
 
-  const formatUptime = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600)
-    const minutes = Math.floor((seconds % 3600) / 60)
-    return `${hours}h ${minutes}m`
-  }
+export function Dashboard() {
+  const live = useLiveStatus()
+  const health = useHealth()
+  const eventStats = useEventStats(24)
+  const alertStats = useAlertStats(24)
+  const traffic = useTrafficSummary(24, 1)
+  const recentEvents = useRecentEvents(8)
+  const recentAlerts = useRecentAlerts(5)
+
+  const backendDown = health.isError && eventStats.isError
+  const alertColor = alertStats.data?.critical_alerts
+    ? 'danger'
+    : alertStats.data?.high_alerts
+      ? 'warning'
+      : 'success'
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Security Dashboard</h1>
-        <p className="mt-1 text-sm text-gray-600">
-          Real-time network monitoring and threat detection
-        </p>
+        <p className="mt-1 text-sm text-gray-600">Real-time network monitoring and threat detection</p>
       </div>
 
-      {/* Stats Cards */}
+      {backendDown && (
+        <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800" role="alert">
+          Can&apos;t reach the KGuard backend. Check that it is running and that VITE_API_BASE_URL points to
+          it.
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
         <StatsCard
           title="Total Events"
-          value={eventStats?.total_events || 0}
+          value={eventStats.data?.total_events ?? 0}
           icon={EyeIcon}
-          loading={eventsLoading}
+          loading={eventStats.isLoading}
           subtitle="Last 24 hours"
         />
-        
         <StatsCard
           title="Suspicious Events"
-          value={eventStats?.suspicious_events || 0}
+          value={eventStats.data?.suspicious_events ?? 0}
           icon={ExclamationTriangleIcon}
-          loading={eventsLoading}
-          subtitle="Flagged as suspicious"
+          loading={eventStats.isLoading}
+          subtitle="Flagged by detection"
           color="warning"
         />
-        
         <StatsCard
           title="Active Alerts"
-          value={alertStats?.unresolved_alerts || 0}
+          value={alertStats.data?.unresolved_alerts ?? 0}
           icon={ShieldCheckIcon}
-          loading={alertsLoading}
-          subtitle="Require attention"
-          color={alertStats?.critical_alerts ? 'danger' : alertStats?.high_alerts ? 'warning' : 'success'}
+          loading={alertStats.isLoading}
+          subtitle="Need attention"
+          color={alertColor}
         />
-        
         <StatsCard
-          title="System Uptime"
-          value={health?.uptime_seconds ? formatUptime(health.uptime_seconds) : 'N/A'}
+          title="Backend Uptime"
+          value={health.data ? formatUptime(health.data.uptime_seconds) : 'N/A'}
           icon={ServerIcon}
-          loading={!health}
-          subtitle={connectionStatus.connected ? 'Connected' : 'Disconnected'}
-          color={health?.status === 'healthy' ? 'success' : 'warning'}
+          loading={health.isLoading}
+          subtitle={live.connected ? 'Live updates on' : 'Live updates off'}
+          color={health.data?.status === 'healthy' ? 'success' : 'warning'}
         />
       </div>
 
-      {/* Charts Row */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* Traffic Over Time */}
-        <div className="card">
-          <div className="card-header">
-            <div className="flex items-center space-x-2">
-              <ChartBarIcon className="h-5 w-5 text-gray-400" />
-              <h3 className="text-lg font-medium text-gray-900">Traffic Over Time</h3>
-            </div>
-          </div>
+        <Panel title="Traffic Over Time" icon={<ChartBarIcon className="h-5 w-5 text-gray-400" />}>
           <div className="card-content">
-            <div className="h-64 flex items-center justify-center text-gray-500">
-              <p>Traffic chart will appear here</p>
-            </div>
+            {traffic.isLoading ? <Loading /> : <TrafficChart data={traffic.data ?? []} />}
           </div>
-        </div>
-
-        {/* Protocol Distribution */}
-        <div className="card">
-          <div className="card-header">
-            <div className="flex items-center space-x-2">
-              <ChartBarIcon className="h-5 w-5 text-gray-400" />
-              <h3 className="text-lg font-medium text-gray-900">Protocol Distribution</h3>
-            </div>
-          </div>
+        </Panel>
+        <Panel title="Protocol Distribution" icon={<ChartBarIcon className="h-5 w-5 text-gray-400" />}>
           <div className="card-content">
-            <div className="h-64 flex items-center justify-center text-gray-500">
-              <p>Protocol chart will appear here</p>
-            </div>
+            {eventStats.isLoading ? (
+              <Loading />
+            ) : (
+              <ProtocolChart data={eventStats.data?.protocol_distribution ?? {}} />
+            )}
           </div>
-        </div>
+        </Panel>
       </div>
 
-      {/* Recent Activity */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* Recent Events */}
-        <div className="card">
-          <div className="card-header">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <ClockIcon className="h-5 w-5 text-gray-400" />
-                <h3 className="text-lg font-medium text-gray-900">Recent Events</h3>
-              </div>
-              <Link
-                to="/events"
-                className="text-sm text-blue-600 hover:text-blue-700"
-              >
-                View all
-              </Link>
-            </div>
-          </div>
+        <Panel title="Recent Events" icon={<ClockIcon className="h-5 w-5 text-gray-400" />} link="/events">
           <div className="card-content p-0">
-            <div className="p-6 text-center text-gray-500">
-              <p>Recent events will appear here</p>
-            </div>
+            <RecentEvents events={recentEvents.data?.items ?? []} />
           </div>
-        </div>
-
-        {/* Recent Alerts */}
-        <div className="card">
-          <div className="card-header">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <ExclamationTriangleIcon className="h-5 w-5 text-gray-400" />
-                <h3 className="text-lg font-medium text-gray-900">Recent Alerts</h3>
-              </div>
-              <Link
-                to="/alerts"
-                className="text-sm text-blue-600 hover:text-blue-700"
-              >
-                View all
-              </Link>
-            </div>
-          </div>
+        </Panel>
+        <Panel
+          title="Recent Alerts"
+          icon={<ExclamationTriangleIcon className="h-5 w-5 text-gray-400" />}
+          link="/alerts"
+        >
           <div className="card-content p-0">
-            <div className="p-6 text-center text-gray-500">
-              <p>Recent alerts will appear here</p>
-            </div>
+            <RecentAlerts alerts={recentAlerts.data?.items ?? []} />
           </div>
-        </div>
+        </Panel>
       </div>
 
-      {/* System Status */}
       <div className="card">
         <div className="card-header">
           <h3 className="text-lg font-medium text-gray-900">System Status</h3>
         </div>
         <div className="card-content">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div className="flex items-center space-x-3">
-              <div className={`h-3 w-3 rounded-full ${
-                health?.database ? 'bg-green-500' : 'bg-red-500'
-              }`}></div>
-              <div>
-                <p className="text-sm font-medium text-gray-900">Database</p>
-                <p className="text-xs text-gray-500">
-                  {health?.database ? 'Connected' : 'Disconnected'}
-                </p>
-              </div>
-            </div>
-            
-            <div className="flex items-center space-x-3">
-              <div className={`h-3 w-3 rounded-full ${
-                health?.kernel_module ? 'bg-green-500' : 'bg-red-500'
-              }`}></div>
-              <div>
-                <p className="text-sm font-medium text-gray-900">Kernel Module</p>
-                <p className="text-xs text-gray-500">
-                  {health?.kernel_module ? 'Active' : 'Inactive'}
-                </p>
-              </div>
-            </div>
-            
-            <div className="flex items-center space-x-3">
-              <div className={`h-3 w-3 rounded-full ${
-                connectionStatus.connected ? 'bg-green-500' : 'bg-red-500'
-              }`}></div>
-              <div>
-                <p className="text-sm font-medium text-gray-900">WebSocket</p>
-                <p className="text-xs text-gray-500">
-                  {connectionStatus.connected ? 'Connected' : 'Disconnected'}
-                </p>
-              </div>
-            </div>
+            <StatusDot
+              ok={!!health.data?.database}
+              label="Database"
+              detail={health.data?.database ? 'Connected' : 'Disconnected'}
+            />
+            <StatusDot
+              ok={!!health.data?.kernel_module}
+              label="Kernel Module"
+              detail={health.data?.kernel_module ? 'Active' : 'Not loaded'}
+            />
+            <StatusDot
+              ok={live.connected}
+              label="Live Updates"
+              detail={live.connected ? 'Connected' : live.reconnecting ? 'Reconnecting…' : 'Disconnected'}
+            />
           </div>
         </div>
       </div>

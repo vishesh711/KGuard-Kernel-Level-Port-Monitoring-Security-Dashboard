@@ -26,7 +26,7 @@ export interface SecurityAlert {
   dst_ip?: string
   dst_port?: number
   related_event_ids?: number[]
-  metadata?: Record<string, any>
+  metadata?: Record<string, unknown>
   acknowledged: boolean
   acknowledged_at?: string
   acknowledged_by?: string
@@ -35,7 +35,7 @@ export interface SecurityAlert {
   resolution_notes?: string
 }
 
-export type AlertType = 
+export type AlertType =
   | 'PORT_SCAN'
   | 'BRUTE_FORCE'
   | 'SUSPICIOUS_PORT'
@@ -109,7 +109,7 @@ export interface PaginatedResponse<T> {
 
 export interface WebSocketMessage {
   type: string
-  data: any
+  data: Record<string, unknown>
   timestamp: string
 }
 

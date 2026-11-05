@@ -38,10 +38,12 @@ export function AlertBadge({ count, severity = 'MEDIUM', size = 'sm' }: AlertBad
   if (count === 0) return null
 
   return (
-    <span className={`
+    <span
+      className={`
       inline-flex items-center justify-center rounded-full font-medium
       ${getSeverityColor()} ${getSizeClasses()}
-    `}>
+    `}
+    >
       {count > 99 ? '99+' : count}
     </span>
   )

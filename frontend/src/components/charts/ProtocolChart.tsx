@@ -45,26 +45,19 @@ export function ProtocolChart({ data }: ProtocolChartProps) {
               <Cell key={`cell-${index}`} fill={entry.color} />
             ))}
           </Pie>
-          <Tooltip 
+          <Tooltip
             contentStyle={{
               backgroundColor: '#fff',
               border: '1px solid #e5e7eb',
               borderRadius: '6px',
               boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
             }}
-            formatter={(value: number) => [
-              `${value} (${((value / total) * 100).toFixed(1)}%)`,
-              'Count'
-            ]}
+            formatter={(value: number) => [`${value} (${((value / total) * 100).toFixed(1)}%)`, 'Count']}
           />
-          <Legend 
-            verticalAlign="bottom" 
+          <Legend
+            verticalAlign="bottom"
             height={36}
-            formatter={(value, entry) => (
-              <span style={{ color: entry.color }}>
-                {value}
-              </span>
-            )}
+            formatter={(value, entry) => <span style={{ color: entry.color }}>{value}</span>}
           />
         </PieChart>
       </ResponsiveContainer>
