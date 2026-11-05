@@ -4,18 +4,22 @@ Network Events API Endpoints
 This module provides REST API endpoints for network events.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, func, desc
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
-from datetime import datetime, timedelta
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import String, and_, case, cast, desc, func
+from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models.network_event import NetworkEvent
-from ..schemas.network_event import (
-    NetworkEventResponse, NetworkEventFilter, NetworkEventStats, TrafficSummary
-)
 from ..schemas.common import PaginatedResponse
+from ..schemas.network_event import (
+    NetworkEventResponse,
+    NetworkEventStats,
+    TrafficSummary,
+)
+from .buckets import bucket_expr, fill_series
 
 router = APIRouter(prefix="/api/events", tags=["events"])
 
@@ -30,6 +34,8 @@ async def get_events(
     dst_port: Optional[int] = Query(None, ge=0, le=65535, description="Filter by destination port"),
     protocol: Optional[str] = Query(None, description="Filter by protocol"),
     is_suspicious: Optional[bool] = Query(None, description="Filter by suspicious flag"),
+    direction: Optional[str] = Query(None, pattern="^(in|out|fwd)$", description="Filter by direction"),
+    process_name: Optional[str] = Query(None, description="Filter by process name"),
     start_time: Optional[datetime] = Query(None, description="Start time filter"),
     end_time: Optional[datetime] = Query(None, description="End time filter"),
     db: Session = Depends(get_db)
@@ -40,7 +46,7 @@ async def get_events(
     try:
         # Build query with filters
         query = db.query(NetworkEvent)
-        
+
         if src_ip:
             query = query.filter(NetworkEvent.src_ip == src_ip)
         if dst_ip:
@@ -53,30 +59,34 @@ async def get_events(
             query = query.filter(NetworkEvent.protocol == protocol)
         if is_suspicious is not None:
             query = query.filter(NetworkEvent.is_suspicious == is_suspicious)
+        if direction:
+            query = query.filter(NetworkEvent.direction == direction)
+        if process_name:
+            query = query.filter(NetworkEvent.process_name == process_name)
         if start_time:
             query = query.filter(NetworkEvent.created_at >= start_time)
         if end_time:
             query = query.filter(NetworkEvent.created_at <= end_time)
-        
+
         # Get total count
         total = query.count()
-        
+
         # Apply pagination and ordering
         events = query.order_by(desc(NetworkEvent.created_at)).offset(
             (page - 1) * size
         ).limit(size).all()
-        
+
         # Calculate pagination info
         pages = (total + size - 1) // size
-        
+
         return PaginatedResponse(
-            items=[NetworkEventResponse.from_orm(event) for event in events],
+            items=[NetworkEventResponse.model_validate(event) for event in events],
             total=total,
             page=page,
             size=size,
             pages=pages
         )
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving events: {str(e)}")
 
@@ -89,8 +99,8 @@ async def get_event(event_id: int, db: Session = Depends(get_db)):
     event = db.query(NetworkEvent).filter(NetworkEvent.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    
-    return NetworkEventResponse.from_orm(event)
+
+    return NetworkEventResponse.model_validate(event)
 
 
 @router.get("/stats/summary", response_model=NetworkEventStats)
@@ -105,7 +115,7 @@ async def get_event_stats(
         # Calculate time range
         end_time = datetime.utcnow()
         start_time = end_time - timedelta(hours=hours)
-        
+
         # Base query for time range
         base_query = db.query(NetworkEvent).filter(
             and_(
@@ -113,17 +123,17 @@ async def get_event_stats(
                 NetworkEvent.created_at <= end_time
             )
         )
-        
+
         # Total events
         total_events = base_query.count()
-        
+
         # Suspicious events
         suspicious_events = base_query.filter(NetworkEvent.is_suspicious == True).count()
-        
+
         # Unique IPs
         unique_src_ips = base_query.with_entities(NetworkEvent.src_ip).distinct().count()
         unique_dst_ips = base_query.with_entities(NetworkEvent.dst_ip).distinct().count()
-        
+
         # Protocol distribution
         protocol_dist = db.query(
             NetworkEvent.protocol,
@@ -134,9 +144,9 @@ async def get_event_stats(
                 NetworkEvent.created_at <= end_time
             )
         ).group_by(NetworkEvent.protocol).all()
-        
+
         protocol_distribution = {proto: count for proto, count in protocol_dist}
-        
+
         # Top source IPs
         top_src_ips = db.query(
             NetworkEvent.src_ip,
@@ -147,9 +157,9 @@ async def get_event_stats(
                 NetworkEvent.created_at <= end_time
             )
         ).group_by(NetworkEvent.src_ip).order_by(desc('count')).limit(10).all()
-        
+
         top_src_ips_list = [{"ip": ip, "count": count} for ip, count in top_src_ips]
-        
+
         # Top destination ports
         top_dst_ports = db.query(
             NetworkEvent.dst_port,
@@ -160,27 +170,23 @@ async def get_event_stats(
                 NetworkEvent.created_at <= end_time
             )
         ).group_by(NetworkEvent.dst_port).order_by(desc('count')).limit(10).all()
-        
+
         top_dst_ports_list = [{"port": port, "count": count} for port, count in top_dst_ports]
-        
-        # Events per hour
-        events_per_hour = []
-        for i in range(hours):
-            hour_start = start_time + timedelta(hours=i)
-            hour_end = hour_start + timedelta(hours=1)
-            
-            count = db.query(NetworkEvent).filter(
-                and_(
-                    NetworkEvent.created_at >= hour_start,
-                    NetworkEvent.created_at < hour_end
-                )
-            ).count()
-            
-            events_per_hour.append({
-                "hour": hour_start.isoformat(),
-                "count": count
-            })
-        
+
+        # Events per hour, grouped in the database
+        hour_bucket = bucket_expr(db, NetworkEvent.created_at, 3600)
+        hourly = db.query(hour_bucket, func.count(NetworkEvent.id)).filter(
+            and_(
+                NetworkEvent.created_at >= start_time,
+                NetworkEvent.created_at <= end_time
+            )
+        ).group_by(hour_bucket).all()
+
+        events_per_hour = [
+            {"hour": hour.isoformat(), "count": count}
+            for hour, count in fill_series(dict(hourly), start_time, end_time, 3600, limit=hours)
+        ]
+
         return NetworkEventStats(
             total_events=total_events,
             suspicious_events=suspicious_events,
@@ -191,7 +197,7 @@ async def get_event_stats(
             top_dst_ports=top_dst_ports_list,
             events_per_hour=events_per_hour
         )
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error calculating statistics: {str(e)}")
 
@@ -206,50 +212,54 @@ async def get_traffic_summary(
     Get traffic summary statistics over time intervals
     """
     try:
-        summaries = []
         end_time = datetime.utcnow()
-        
-        for i in range(0, hours, interval):
-            period_end = end_time - timedelta(hours=i)
-            period_start = period_end - timedelta(hours=interval)
-            
-            # Query events in this time period
-            events = db.query(NetworkEvent).filter(
-                and_(
-                    NetworkEvent.created_at >= period_start,
-                    NetworkEvent.created_at < period_end
-                )
-            ).all()
-            
-            # Calculate statistics
-            total_packets = len(events)
-            tcp_packets = len([e for e in events if e.protocol == 'TCP'])
-            udp_packets = len([e for e in events if e.protocol == 'UDP'])
-            icmp_packets = len([e for e in events if e.protocol == 'ICMP'])
-            
-            # Unique connections (src_ip:src_port -> dst_ip:dst_port)
-            connections = set()
-            suspicious_count = 0
-            
-            for event in events:
-                connections.add(f"{event.src_ip}:{event.src_port}->{event.dst_ip}:{event.dst_port}")
-                if event.is_suspicious:
-                    suspicious_count += 1
-            
-            summary = TrafficSummary(
+        start_time = end_time - timedelta(hours=hours)
+        bucket_seconds = interval * 3600
+        bucket = bucket_expr(db, NetworkEvent.created_at, bucket_seconds)
+        in_range = and_(
+            NetworkEvent.created_at >= start_time,
+            NetworkEvent.created_at <= end_time
+        )
+
+        def count_protocol(name):
+            return func.sum(case((NetworkEvent.protocol == name, 1), else_=0))
+
+        connection = (
+            NetworkEvent.src_ip + ":" + cast(NetworkEvent.src_port, String) + "->"
+            + NetworkEvent.dst_ip + ":" + cast(NetworkEvent.dst_port, String)
+        )
+
+        rows = db.query(
+            bucket,
+            func.count(NetworkEvent.id),
+            count_protocol("TCP"),
+            count_protocol("UDP"),
+            count_protocol("ICMP"),
+            func.count(func.distinct(connection)),
+            func.sum(case((NetworkEvent.is_suspicious.is_(True), 1), else_=0)),
+        ).filter(in_range).group_by(bucket).all()
+
+        by_bucket = {row[0]: row[1:] for row in rows}
+        empty = (0, 0, 0, 0, 0, 0)
+        totals = {b: values[0] for b, values in by_bucket.items()}
+        limit = -(-hours // interval)  # ceiling division
+
+        summaries = []
+        for period_start, _ in fill_series(totals, start_time, end_time, bucket_seconds, limit=limit):
+            b = int(period_start.replace(tzinfo=timezone.utc).timestamp()) // bucket_seconds
+            total, tcp, udp, icmp, connections, suspicious = by_bucket.get(b, empty)
+            summaries.append(TrafficSummary(
                 timestamp=period_start,
-                total_packets=total_packets,
-                tcp_packets=tcp_packets,
-                udp_packets=udp_packets,
-                icmp_packets=icmp_packets,
-                unique_connections=len(connections),
-                suspicious_activity=suspicious_count
-            )
-            
-            summaries.append(summary)
-        
-        return list(reversed(summaries))  # Return chronologically
-        
+                total_packets=total or 0,
+                tcp_packets=tcp or 0,
+                udp_packets=udp or 0,
+                icmp_packets=icmp or 0,
+                unique_connections=connections or 0,
+                suspicious_activity=suspicious or 0
+            ))
+
+        return summaries
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating traffic summary: {str(e)}")
 
@@ -264,25 +274,20 @@ async def cleanup_old_events(
     """
     try:
         cutoff_date = datetime.utcnow() - timedelta(days=days)
-        
-        # Count events to be deleted
-        count = db.query(NetworkEvent).filter(
-            NetworkEvent.created_at < cutoff_date
-        ).count()
-        
+
         # Delete old events
         deleted = db.query(NetworkEvent).filter(
             NetworkEvent.created_at < cutoff_date
         ).delete()
-        
+
         db.commit()
-        
+
         return {
             "success": True,
             "message": f"Deleted {deleted} events older than {days} days",
             "deleted_count": deleted
         }
-        
+
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error cleaning up events: {str(e)}")

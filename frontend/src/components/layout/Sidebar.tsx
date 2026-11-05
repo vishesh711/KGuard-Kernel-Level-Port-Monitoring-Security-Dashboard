@@ -1,11 +1,11 @@
 import { NavLink } from 'react-router-dom'
-import { 
-  HomeIcon, 
-  DocumentTextIcon, 
+import {
+  HomeIcon,
+  DocumentTextIcon,
   ExclamationTriangleIcon,
   ChartBarIcon,
   CogIcon,
-  ShieldCheckIcon
+  ShieldCheckIcon,
 } from '@heroicons/react/24/outline'
 import { ConnectionStatus } from '../ui/ConnectionStatus'
 

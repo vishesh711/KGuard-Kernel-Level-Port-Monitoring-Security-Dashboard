@@ -4,9 +4,10 @@ Network Event Pydantic Schemas
 This module contains Pydantic schemas for network event API endpoints.
 """
 
-from pydantic import BaseModel, Field
-from typing import Optional
 from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class NetworkEventBase(BaseModel):
@@ -32,9 +33,17 @@ class NetworkEventResponse(NetworkEventBase):
     created_at: datetime = Field(..., description="Database insertion timestamp")
     is_suspicious: bool = Field(..., description="Whether event is suspicious")
     event_type: str = Field(..., description="Event classification type")
-    
-    class Config:
-        from_attributes = True
+    family: Optional[int] = Field(None, description="IP version (4 or 6)")
+    direction: Optional[str] = Field(None, description="in, out or fwd")
+    ct_state: Optional[str] = Field(None, description="Connection tracking state")
+    netns: Optional[int] = Field(None, description="Network namespace inode number")
+    ifindex: Optional[int] = Field(None, description="Interface index")
+    pid: Optional[int] = Field(None, description="Process that sent or owns the connection")
+    process_name: Optional[str] = Field(None, description="Name of that process")
+    uid: Optional[int] = Field(None, description="User that owns the socket")
+    sock_ino: Optional[int] = Field(None, description="Socket inode number")
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class NetworkEventFilter(BaseModel):
@@ -59,9 +68,8 @@ class NetworkEventStats(BaseModel):
     top_src_ips: list = Field(..., description="Top source IPs by event count")
     top_dst_ports: list = Field(..., description="Top destination ports by event count")
     events_per_hour: list = Field(..., description="Events per hour for the last 24 hours")
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TrafficSummary(BaseModel):
@@ -73,6 +81,5 @@ class TrafficSummary(BaseModel):
     icmp_packets: int = Field(..., description="ICMP packets count")
     unique_connections: int = Field(..., description="Unique connections count")
     suspicious_activity: int = Field(..., description="Suspicious activity count")
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)

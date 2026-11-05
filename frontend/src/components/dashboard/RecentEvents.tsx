@@ -1,5 +1,6 @@
 import { NetworkEvent } from '../../types'
 import { formatDistanceToNow } from 'date-fns'
+import { parseServerDate } from '../../lib/time'
 
 interface RecentEventsProps {
   events: NetworkEvent[]
@@ -35,7 +36,9 @@ export function RecentEvents({ events }: RecentEventsProps) {
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-3">
                 <div className="flex-shrink-0">
-                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getProtocolColor(event.protocol)}`}>
+                  <span
+                    className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getProtocolColor(event.protocol)}`}
+                  >
                     {event.protocol}
                   </span>
                 </div>
@@ -44,7 +47,14 @@ export function RecentEvents({ events }: RecentEventsProps) {
                     {event.src_ip}:{event.src_port} → {event.dst_ip}:{event.dst_port}
                   </p>
                   <p className="text-sm text-gray-500">
-                    {formatDistanceToNow(new Date(event.created_at), { addSuffix: true })}
+                    {event.direction && <span className="mr-2 uppercase">{event.direction}</span>}
+                    {event.process_name && (
+                      <span className="mr-2 font-mono">
+                        {event.process_name}
+                        {event.pid != null && ` (${event.pid})`}
+                      </span>
+                    )}
+                    {formatDistanceToNow(parseServerDate(event.created_at), { addSuffix: true })}
                   </p>
                 </div>
               </div>

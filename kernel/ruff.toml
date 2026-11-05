@@ -1,0 +1,6 @@
+# Lint settings for the kernel's Python tools and tests
+line-length = 120
+target-version = "py39"
+
+[lint]
+select = ["E", "F", "W", "I"]

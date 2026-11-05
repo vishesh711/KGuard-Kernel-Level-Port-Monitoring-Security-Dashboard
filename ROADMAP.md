@@ -27,68 +27,96 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
 
 ## Phase 0 — Foundations
 
-- [ ] **F0.1 Update Python dependencies.** Unpin versions that fail on Python 3.12/3.13; remove unused packages (Celery, pandas, numpy) unless a later task uses them.
+- [x] **F0.1 Update Python dependencies.** Unpin versions that fail on Python 3.12/3.13; remove unused packages (Celery, pandas, numpy) unless a later task uses them.
   *Done when:* `pip install -r backend/requirements.txt` works on Python 3.12 and 3.13.
-- [ ] **F0.2 Backend test setup.** Add `backend/tests/` with pytest, a temporary SQLite database fixture and a FastAPI test client.
+  *Status:* Done. Runtime and dev requirements split; 35 backend tests pass on Python 3.11, 3.12 and 3.13.
+- [x] **F0.2 Backend test setup.** Add `backend/tests/` with pytest, a temporary SQLite database fixture and a FastAPI test client.
   *Done when:* `pytest` runs and passes one smoke test.
-- [ ] **F0.3 Fake kernel source.** Make the `/proc/kguard` path configurable in tests and add a fixture that writes sample event JSON, so the backend can be tested without the module.
+  *Status:* Done. 35 tests across collector, detection, alerts, events, health and WebSocket; 84% coverage.
+- [x] **F0.3 Fake kernel source.** Make the `/proc/kguard` path configurable in tests and add a fixture that writes sample event JSON, so the backend can be tested without the module.
   *Done when:* a test feeds 50 fake events through the collector into the database.
-- [ ] **F0.4 Frontend checks.** Make `npm run lint` and `npm run build` pass; add Vitest with one component test.
+  *Status:* Done. `tests/conftest.py` writes events in the exact `/proc/kguard` format.
+- [x] **F0.4 Frontend checks.** Make `npm run lint` and `npm run build` pass; add Vitest with one component test.
   *Done when:* all three commands pass locally.
-- [ ] **F0.5 Kernel build check.** Add `kernel/` build to CI against the runner's kernel headers, with `-Werror`.
+  *Status:* Done. ESLint config added, Jest replaced by Vitest (9 tests), build passes.
+- [x] **F0.5 Kernel build check.** Add `kernel/` build to CI against the runner's kernel headers, with `-Werror`.
   *Done when:* CI fails on any kernel compiler warning.
+  *Status:* Done. `-Werror` in the kernel Makefile; builds clean against 6.8 headers.
 - [ ] **F0.6 CI pipeline.** GitHub Actions workflow running F0.2–F0.5 on every push and PR.
   *Done when:* the workflow is green on `main`.
-- [ ] **F0.7 Code style.** Add ruff (Python), Prettier (frontend) and `checkpatch.pl --no-tree` (kernel) to CI.
+  *Status:* Workflow added in `.github/workflows/ci.yml` (backend matrix, frontend, kernel). Tick once the first run is green.
+- [x] **F0.7 Code style.** Add ruff (Python), Prettier (frontend) and `checkpatch.pl --no-tree` (kernel) to CI.
   *Done when:* all three run in CI with no errors.
+  *Status:* Done. ruff, Prettier and `make checkpatch` (strict) all pass with zero findings.
 
 ## Phase 1 — Make v1.0 work
 
-- [ ] **B1.1 Fix backend startup.** `database.py`: use `conn.execute(text("SELECT 1"))`.
+- [x] **B1.1 Fix backend startup.** `database.py`: use `conn.execute(text("SELECT 1"))`.
   *Done when:* the app starts and `GET /api/health/` returns 200 (test).
-- [ ] **B1.2 Fix alert metadata.** Use `alert_metadata=` in `models/security_alert.py` and `services/anomaly_detector.py`; map it to `metadata` in `SecurityAlertResponse`.
+  *Status:* Done. Also fixed the same bug in `/api/health/database`.
+- [x] **B1.2 Fix alert metadata.** Use `alert_metadata=` in `models/security_alert.py` and `services/anomaly_detector.py`; map it to `metadata` in `SecurityAlertResponse`.
   *Done when:* `GET /api/alerts/` returns 200 with alerts present, and metadata is stored (test).
-- [ ] **B1.3 Run detection on every batch.** After `_store_events`, pass the saved events to `anomaly_detector.analyze_events()` and set `is_suspicious` / `event_type` on matching events.
+  *Status:* Done. Also fixed acknowledge/resolve notes never being saved (in-place JSON edits).
+- [x] **B1.3 Run detection on every batch.** After `_store_events`, pass the saved events to `anomaly_detector.analyze_events()` and set `is_suspicious` / `event_type` on matching events.
   *Done when:* feeding 15 ports from one IP produces a `PORT_SCAN` alert (test).
-- [ ] **B1.4 Live updates.** Call `broadcast_network_event` and `broadcast_security_alert` after storing; check that message shapes match `frontend/src/types`.
+  *Status:* Done. Detection now counts connection attempts only (SYN without ACK, UDP) over a 60-second sliding window per source.
+- [x] **B1.4 Live updates.** Call `broadcast_network_event` and `broadcast_security_alert` after storing; check that message shapes match `frontend/src/types`.
   *Done when:* a WebSocket test client receives an alert message, and the dashboard shows a pop-up.
-- [ ] **B1.5 Fix startup hooks.** Move `periodic_tasks` into the `lifespan` handler (remove deprecated `on_event`) and cancel background tasks on shutdown.
+  *Status:* Done. Dashboard now uses real API data (it was hard-coded demo data) and one app-wide WebSocket.
+- [x] **B1.5 Fix startup hooks.** Move `periodic_tasks` into the `lifespan` handler (remove deprecated `on_event`) and cancel background tasks on shutdown.
   *Done when:* no deprecation warnings, and shutdown is clean.
-- [ ] **B1.6 Make the stats endpoints faster.** Replace the per-hour loop and load-everything queries in `/stats/summary` and `/stats/traffic` with `GROUP BY` queries.
+  *Status:* Done.
+- [x] **B1.6 Make the stats endpoints faster.** Replace the per-hour loop and load-everything queries in `/stats/summary` and `/stats/traffic` with `GROUP BY` queries.
   *Done when:* each endpoint runs one or two queries; response time for 1M rows is recorded.
-- [ ] **K1.1 Fix kernel compile.** Rename the `current` variable in `kguard_buffer.c`; remove or use `kguard_buffer_count`.
+  *Status:* Done. 1M rows on SQLite: traffic summary 15.9 s (old, loads every row) to 3.9 s; event summary 10 s, mostly per-field GROUP BYs that need PostgreSQL or pre-aggregation (S6.1).
+- [x] **K1.1 Fix kernel compile.** Rename the `current` variable in `kguard_buffer.c`; remove or use `kguard_buffer_count`.
   *Done when:* builds with no warnings (F0.5).
-- [ ] **K1.2 Fix event loss on read.** Rewrite `/proc/kguard` with `seq_operations` (start/next/stop/show) so events are removed only after they're written; move the event array off the stack.
+  *Status:* Done. Builds with zero warnings under `-Werror`.
+- [x] **K1.2 Fix event loss on read.** Rewrite `/proc/kguard` with `seq_operations` (start/next/stop/show) so events are removed only after they're written; move the event array off the stack.
   *Done when:* reading 1000 queued events returns all 1000, checked with a load test.
-- [ ] **K1.3 Fix the collector's speed limit.** Read until the buffer is empty on each poll instead of 100 events per second.
+  *Status:* Verified on Linux 6.8 in a VM: 20,000 of 20,000 events at 5,000 packets/s, and lossless with 7-byte reads.
+- [x] **K1.3 Fix the collector's speed limit.** Read until the buffer is empty on each poll instead of 100 events per second.
   *Done when:* sustained 5,000 packets/s shows zero drops.
-- [ ] **E1.1 End-to-end smoke test.** Script: load module → start backend → run `nmap` against localhost → check that a port-scan alert appears through the API.
+  *Status:* Verified on Linux 6.8: 5,000 packets/s for 4 s, zero drops.
+- [x] **E1.1 End-to-end smoke test.** Script: load module → start backend → run `nmap` against localhost → check that a port-scan alert appears through the API.
   *Done when:* the script passes in a VM.
+  *Status:* Passes on Linux 6.8 in a VM: module loads, backend reads /dev/kguard, nmap scan raises PORT_SCAN, curl and an nc listener are named, nothing dropped.
 
 ## Phase 2 — Advanced kernel module (C)
 
-- [ ] **K2.1 Safe packet parsing.** Use `skb_header_pointer()` for IP/TCP/UDP headers; handle IP options (`ihl`), fragments and non-linear packets.
+- [x] **K2.1 Safe packet parsing.** Use `skb_header_pointer()` for IP/TCP/UDP headers; handle IP options (`ihl`), fragments and non-linear packets.
   *Done when:* fragmented and option-carrying packets are parsed correctly (test packets from scapy).
-- [ ] **K2.2 Wider coverage.** Hook `LOCAL_IN`, `LOCAL_OUT` and `FORWARD`; add IPv6 (`NFPROTO_IPV6`, extension headers). Add a direction field to events.
+  *Status:* Done. skb_header_pointer() for TCP/UDP, IP options via ip_hdrlen(), IPv6 extension headers via ipv6_skip_exthdr(), non-first fragments flagged.
+- [x] **K2.2 Wider coverage.** Hook `LOCAL_IN`, `LOCAL_OUT` and `FORWARD`; add IPv6 (`NFPROTO_IPV6`, extension headers). Add a direction field to events.
   *Done when:* events show in/out/forward for IPv4 and IPv6.
-- [ ] **K2.3 Per-CPU lock-free ring buffer.** One single-producer ring per CPU, `smp_store_release` / `smp_load_acquire` for indices, no spinlock in the packet path. Size set by module parameter.
+  *Status:* Done. LOCAL_IN, LOCAL_OUT and FORWARD for IPv4 and IPv6; events carry direction and interface. Verified.
+- [x] **K2.3 Per-CPU lock-free ring buffer.** One single-producer ring per CPU, `smp_store_release` / `smp_load_acquire` for indices, no spinlock in the packet path. Size set by module parameter.
   *Done when:* the packet path takes no locks; a stress test on all CPUs passes under lockdep and KCSAN.
-- [ ] **K2.4 Character device with mmap.** `/dev/kguard`: userspace maps the rings read-only (`remap_vmalloc_range`), sleeps in `poll()` on a wait queue, and moves its own read index. Keep `/proc/kguard` as a text debug view.
+  *Status:* Done. One single-producer ring per CPU, interrupts off only for the write, acquire/release on head and tail. Verified: 40,000 events at 5,000/s, zero drops; strict checkpatch clean.
+- [x] **K2.4 Character device with mmap.** `/dev/kguard`: userspace maps the rings read-only (`remap_vmalloc_range`), sleeps in `poll()` on a wait queue, and moves its own read index. Keep `/proc/kguard` as a text debug view.
   *Done when:* a small C reader gets events with no `read()` copies and no busy polling.
-- [ ] **K2.5 Binary event format.** Fixed-size, versioned struct shared through a UAPI header (`include/uapi/kguard.h`), with real-time timestamps (`ktime_get_real_ns`).
+  *Status:* Done. Exclusive open, MAP_SHARED mapping via remap_vmalloc_range(), poll() wait queue. Verified with tools/kguard_reader.c: idle reader uses ~0.05 s CPU over 3 s with zero wakeups.
+- [x] **K2.5 Binary event format.** Fixed-size, versioned struct shared through a UAPI header (`include/uapi/kguard.h`), with real-time timestamps (`ktime_get_real_ns`).
   *Done when:* the Python collector parses the struct with `struct.unpack`, and timestamps match wall-clock time.
-- [ ] **K2.6 Generic Netlink control channel.** Commands: get stats, set thresholds, add/remove block entries. Multicast group for alerts.
+  *Status:* Done. 96-byte versioned struct in include/uapi/linux/kguard.h; backend decodes it with struct.
+- [x] **K2.6 Generic Netlink control channel.** Commands: get stats, set thresholds, add/remove block entries. Multicast group for alerts.
   *Done when:* a `kguardctl` CLI (or `pyroute2` script) can change thresholds live.
-- [ ] **K2.7 Process attribution.** On outgoing traffic, map `skb->sk` to the owning process (PID, command name, UID); for incoming connections, record the listening socket's owner.
+  *Status:* Done. Family "kguard": GET_STATS, GET_CONFIG, SET_CONFIG (CAP_NET_ADMIN), multicast notification on change. CLI: tools/kguardctl.py. Thresholds arrive with Phase 3.
+- [x] **K2.7 Process attribution.** On outgoing traffic, map `skb->sk` to the owning process (PID, command name, UID); for incoming connections, record the listening socket's owner.
   *Done when:* a `curl` shows as `curl` with its PID, and an `nc -l 4444` listener shows as `nc`.
-- [ ] **K2.8 Connection tracking.** Read conntrack state (NEW, ESTABLISHED, RELATED, INVALID) for each packet when `nf_conntrack` is loaded.
+  *Status:* Done. Sender PID/name from process context; socket owner UID and inode for incoming TCP/UDP (listener lookup); backend resolves inode to process. Verified with curl and nc.
+- [x] **K2.8 Connection tracking.** Read conntrack state (NEW, ESTABLISHED, RELATED, INVALID) for each packet when `nf_conntrack` is loaded.
   *Done when:* events carry connection state, and INVALID packets are counted.
-- [ ] **K2.9 Per-namespace support.** Register hooks with `pernet_operations` so each network namespace (container) gets its own hooks and counters; tag events with a namespace ID.
+  *Status:* Done. nf_ct_get() state, conntrack enabled per namespace with nf_ct_netns_get(); a SYN+FIN packet is reported INVALID. Verified.
+- [x] **K2.9 Per-namespace support.** Register hooks with `pernet_operations` so each network namespace (container) gets its own hooks and counters; tag events with a namespace ID.
   *Done when:* traffic inside a Docker container is captured and labeled.
-- [ ] **K2.10 Settings and stats.** Module parameters (buffer size, enabled hooks); `debugfs` or sysfs counters: packets seen, events dropped, buffer fill, nanoseconds per packet.
+  *Status:* Done. pernet_operations; a new namespace is hooked automatically and its events carry its inode number. Verified with ip netns.
+- [x] **K2.10 Settings and stats.** Module parameters (buffer size, enabled hooks); `debugfs` or sysfs counters: packets seen, events dropped, buffer fill, nanoseconds per packet.
   *Done when:* counters are readable under `/sys/kernel/debug/kguard/`.
-- [ ] **K2.11 Module tracepoints.** Add `TRACE_EVENT`s for drops and detections so `perf` and `trace-cmd` can observe the module.
+  *Status:* Done. Seven module parameters; debugfs stats, rings and config; hook cost sampled 1 in 64 packets.
+- [x] **K2.11 Module tracepoints.** Add `TRACE_EVENT`s for drops and detections so `perf` and `trace-cmd` can observe the module.
   *Done when:* `perf record -e kguard:*` shows events.
+  *Status:* Done. kguard:kguard_event and kguard:kguard_ring_full; verified through tracefs (perf uses the same events).
 
 ## Phase 3 — In-kernel detection and firewall
 
@@ -118,6 +146,8 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
 
 ## Phase 5 — Deep network detection
 
+- [ ] **N5.0 Reduce sensitive-port noise.** Ports 80 and 443 are in the default `SUSPICIOUS_PORTS`, so every new web client raises a MEDIUM alert on a web server. Drop them from the default or score them lower, and add an allowlist of trusted sources.
+  *Done when:* normal web traffic to a web server raises no alerts.
 - [ ] **N5.1 Scan types from TCP flags.** Classify SYN, FIN, NULL, Xmas, ACK and Maimon scans, and UDP scans (from ICMP port-unreachable replies).
   *Done when:* each `nmap` scan type (`-sS -sF -sN -sX -sA -sU`) produces the correctly labeled alert.
 - [ ] **N5.2 SYN flood.** Track half-open connections per destination; note whether SYN cookies are on (`net.ipv4.tcp_syncookies`).
@@ -164,6 +194,8 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
 
 ## Phase 7 — Frontend upgrade
 
+- [ ] **U7.0 Build the placeholder pages.** Events, Alerts, Analytics and Settings are still "coming soon" stubs. Events: filterable, paginated table. Alerts: list with acknowledge/resolve. Analytics: top IPs, top ports, alerts over time. Settings: show detection thresholds.
+  *Done when:* every sidebar link shows real data.
 - [ ] **U7.1 Live data.** Use WebSocket messages to update React Query caches instead of only polling.
   *Done when:* new events appear without refresh in under 1 second.
 - [ ] **U7.2 Process view.** Table of listening ports and active connections with process, PID and user; highlight unexpected listeners.
@@ -181,7 +213,8 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
 
 ## Phase 8 — Proof: benchmarks, attack demos, kernel testing
 
-- [ ] **P8.1 Test lab.** Vagrant or `virtme-ng` setup: one victim VM running KGuard, one attacker VM with nmap, hping3, hydra, scapy, iodine.
+- [ ] **P8.1 Test lab.**
+  *Progress:* `kernel/tests/run_in_vm.sh` boots a throwaway virtme-ng VM and runs the 33-check kernel suite (`kernel/tests/vm_tests.py`); `scripts/e2e_smoke.sh` runs the full stack. Attacker VM still to do. Vagrant or `virtme-ng` setup: one victim VM running KGuard, one attacker VM with nmap, hping3, hydra, scapy, iodine.
   *Done when:* `make lab` brings both up.
 - [ ] **P8.2 Attack demo scripts.** One script per attack in Phase 5, each checking that the expected alert appears.
   *Done when:* `make attack-demo` runs all of them and prints pass/fail.

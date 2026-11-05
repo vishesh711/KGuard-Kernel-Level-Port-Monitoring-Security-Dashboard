@@ -60,9 +60,7 @@ export function SystemHealth() {
   return (
     <div className="flex items-center space-x-2">
       {getStatusIcon()}
-      <span className={`text-sm font-medium ${getStatusColor()}`}>
-        {getStatusText()}
-      </span>
+      <span className={`text-sm font-medium ${getStatusColor()}`}>{getStatusText()}</span>
     </div>
   )
 }

@@ -4,9 +4,10 @@ Common Pydantic Schemas
 This module contains shared schemas used across the API.
 """
 
-from pydantic import BaseModel
-from typing import List, TypeVar, Generic, Optional
 from datetime import datetime
+from typing import Generic, List, Optional, TypeVar
+
+from pydantic import BaseModel, ConfigDict
 
 T = TypeVar('T')
 
@@ -18,9 +19,8 @@ class PaginatedResponse(BaseModel, Generic[T]):
     page: int
     size: int
     pages: int
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class HealthCheck(BaseModel):
@@ -31,9 +31,8 @@ class HealthCheck(BaseModel):
     database: bool
     kernel_module: bool
     uptime_seconds: float
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ErrorResponse(BaseModel):
@@ -41,9 +40,8 @@ class ErrorResponse(BaseModel):
     error: str
     detail: Optional[str] = None
     timestamp: datetime
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SuccessResponse(BaseModel):
@@ -51,6 +49,5 @@ class SuccessResponse(BaseModel):
     success: bool
     message: str
     timestamp: datetime
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)

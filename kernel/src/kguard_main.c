@@ -1,90 +1,118 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
- * KGuard Kernel Module - Main Module File
- * 
- * This file contains the main module initialization and cleanup functions.
- * It serves as the entry point for the KGuard network monitoring kernel module.
+ * KGuard Kernel Module - entry point and module parameters
+ *
+ * Start-up order: rings, /dev/kguard, /proc/kguard, Generic Netlink,
+ * debugfs, and last the Netfilter hooks (so nothing produces events before
+ * there is somewhere to put them). Shutdown runs in reverse.
  */
 
 #include "kguard.h"
 
-/* Module metadata */
+#define CREATE_TRACE_POINTS
+#include "kguard_trace.h"
+
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION(KGUARD_MODULE_DESC);
 MODULE_AUTHOR(KGUARD_MODULE_AUTHOR);
 MODULE_VERSION(KGUARD_MODULE_VERSION);
+/* For process attribution and connection state */
+MODULE_SOFTDEP("pre: nf_conntrack nf_socket_ipv4 nf_socket_ipv6");
 
-/* Global variables */
-struct kguard_buffer *event_buffer = NULL;
-struct proc_dir_entry *kguard_proc_entry = NULL;
+static unsigned int buffer_size = KGUARD_RING_DEFAULT;
+module_param(buffer_size, uint, 0444);
+MODULE_PARM_DESC(buffer_size,
+		 "Events each per-CPU ring holds, rounded up to a power of two (64 to 262144, default 16384)");
 
-/*
- * Module initialization function
- * Called when the module is loaded with insmod
- */
+int kguard_reader_gid = -1;
+module_param_named(reader_gid, kguard_reader_gid, int, 0444);
+MODULE_PARM_DESC(reader_gid,
+		 "Group allowed to read /dev/kguard and /proc/kguard (default -1: root only)");
+
+static bool capture_in = true;
+module_param(capture_in, bool, 0444);
+MODULE_PARM_DESC(capture_in, "Capture packets delivered to this host (default on)");
+
+static bool capture_out = true;
+module_param(capture_out, bool, 0444);
+MODULE_PARM_DESC(capture_out, "Capture packets sent by this host (default on)");
+
+static bool capture_fwd = true;
+module_param(capture_fwd, bool, 0444);
+MODULE_PARM_DESC(capture_fwd, "Capture packets routed through this host (default on)");
+
+static bool capture_ipv6 = true;
+module_param(capture_ipv6, bool, 0444);
+MODULE_PARM_DESC(capture_ipv6, "Capture IPv6 as well as IPv4 (default on)");
+
+static bool socket_lookup = true;
+module_param(socket_lookup, bool, 0444);
+MODULE_PARM_DESC(socket_lookup, "Find the local socket of incoming TCP/UDP packets (default on)");
+
+static unsigned int wakeup_events = 64;
+module_param(wakeup_events, uint, 0444);
+MODULE_PARM_DESC(wakeup_events, "Wake a waiting reader every N events (default 64)");
+
+/* Load-time values; Generic Netlink can change them later */
+struct kguard_config kguard_cfg;
+
 static int __init kguard_init(void)
 {
-    int ret = 0;
+	int ret;
 
-    kguard_info("Initializing KGuard kernel module v%s", KGUARD_MODULE_VERSION);
+	kguard_cfg.capture_in = capture_in;
+	kguard_cfg.capture_out = capture_out;
+	kguard_cfg.capture_fwd = capture_fwd;
+	kguard_cfg.capture_ipv6 = capture_ipv6;
+	kguard_cfg.socket_lookup = socket_lookup;
+	kguard_cfg.wakeup_events = clamp_t(unsigned int, wakeup_events, 1, 1U << 20);
 
-    /* Initialize the event buffer */
-    ret = kguard_buffer_init();
-    if (ret) {
-        kguard_err("Failed to initialize event buffer: %d", ret);
-        goto error_buffer;
-    }
-    kguard_info("Event buffer initialized successfully");
+	ret = kguard_ring_init(buffer_size);
+	if (ret)
+		goto err;
+	ret = kguard_dev_init();
+	if (ret)
+		goto err_ring;
+	ret = kguard_proc_init();
+	if (ret)
+		goto err_dev;
+	ret = kguard_genl_init();
+	if (ret)
+		goto err_proc;
+	kguard_debugfs_init();
+	ret = kguard_netfilter_init();
+	if (ret)
+		goto err_genl;
 
-    /* Initialize proc filesystem interface */
-    ret = kguard_proc_init();
-    if (ret) {
-        kguard_err("Failed to initialize proc interface: %d", ret);
-        goto error_proc;
-    }
-    kguard_info("Proc interface initialized successfully");
+	kguard_info("v%s loaded: /dev/kguard, /proc/kguard, %u netns hooked",
+		    KGUARD_MODULE_VERSION, kguard_netns_count());
+	return 0;
 
-    /* Initialize Netfilter hooks */
-    ret = kguard_netfilter_init();
-    if (ret) {
-        kguard_err("Failed to initialize Netfilter hooks: %d", ret);
-        goto error_netfilter;
-    }
-    kguard_info("Netfilter hooks initialized successfully");
-
-    kguard_info("KGuard module loaded successfully");
-    return 0;
-
-error_netfilter:
-    kguard_proc_cleanup();
-error_proc:
-    kguard_buffer_cleanup();
-error_buffer:
-    return ret;
+err_genl:
+	kguard_debugfs_cleanup();
+	kguard_genl_cleanup();
+err_proc:
+	kguard_proc_cleanup();
+err_dev:
+	kguard_dev_cleanup();
+err_ring:
+	kguard_ring_cleanup();
+err:
+	kguard_err("Failed to load: %d", ret);
+	return ret;
 }
 
-/*
- * Module cleanup function
- * Called when the module is unloaded with rmmod
- */
 static void __exit kguard_exit(void)
 {
-    kguard_info("Unloading KGuard kernel module");
-
-    /* Cleanup Netfilter hooks */
-    kguard_netfilter_cleanup();
-    kguard_info("Netfilter hooks cleaned up");
-
-    /* Cleanup proc filesystem interface */
-    kguard_proc_cleanup();
-    kguard_info("Proc interface cleaned up");
-
-    /* Cleanup event buffer */
-    kguard_buffer_cleanup();
-    kguard_info("Event buffer cleaned up");
-
-    kguard_info("KGuard module unloaded successfully");
+	/* Stop producers first; unregistering waits for running hooks */
+	kguard_netfilter_cleanup();
+	kguard_debugfs_cleanup();
+	kguard_genl_cleanup();
+	kguard_proc_cleanup();
+	kguard_dev_cleanup();
+	kguard_ring_cleanup();
+	kguard_info("unloaded");
 }
 
-/* Register module init and exit functions */
 module_init(kguard_init);
 module_exit(kguard_exit);

@@ -1,124 +1,128 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
- * KGuard Kernel Module - Header File
- * 
- * This file contains shared definitions, structures, and function declarations
- * for the KGuard network monitoring kernel module.
+ * KGuard Kernel Module - internal definitions
+ *
+ * Data path:
+ *   Netfilter hooks (one set per network namespace, kguard_netfilter.c)
+ *     -> per-CPU lock-free rings (kguard_ring.c)
+ *     -> /dev/kguard mmap + poll (kguard_dev.c), or /proc/kguard JSON
+ *        debug view (kguard_proc.c)
+ * Control and statistics:
+ *   Generic Netlink (kguard_genl.c), debugfs (kguard_stats.c),
+ *   tracepoints (kguard_trace.h)
  */
 
 #ifndef _KGUARD_H
 #define _KGUARD_H
 
+/* Prefix every log line with the module name */
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/init.h>
-#include <linux/proc_fs.h>
-#include <linux/seq_file.h>
-#include <linux/uaccess.h>
-#include <linux/netfilter.h>
-#include <linux/netfilter_ipv4.h>
-#include <linux/ip.h>
-#include <linux/tcp.h>
-#include <linux/udp.h>
+#include <linux/types.h>
+#include <linux/percpu.h>
 #include <linux/skbuff.h>
-#include <linux/spinlock.h>
-#include <linux/time.h>
-#include <linux/slab.h>
+#include <linux/netfilter.h>
+#include <uapi/linux/kguard.h>
 
 /* Module information */
-#define KGUARD_MODULE_NAME    "kguard"
-#define KGUARD_MODULE_VERSION "1.0.0"
-#define KGUARD_MODULE_DESC    "KGuard Port Monitor"
-#define KGUARD_MODULE_AUTHOR  "KGuard Development Team"
+#define KGUARD_MODULE_NAME	"kguard"
+#define KGUARD_MODULE_VERSION	"2.0.0"
+#define KGUARD_MODULE_DESC	"KGuard network port monitor"
+#define KGUARD_MODULE_AUTHOR	"KGuard Development Team"
 
-/* Proc filesystem */
-#define KGUARD_PROC_NAME      "kguard"
+#define KGUARD_PROC_NAME	"kguard"
 
-/* Buffer configuration */
-#define KGUARD_BUFFER_SIZE    1024
-#define KGUARD_MAX_EVENT_SIZE 256
+/* Ring size limits, in events per CPU (rounded up to a power of two) */
+#define KGUARD_RING_DEFAULT	16384
+#define KGUARD_RING_MIN		64
+#define KGUARD_RING_MAX		BIT(18)
 
-/* Network event structure */
-struct kguard_event {
-    u64 timestamp;      /* High-resolution timestamp */
-    u32 src_ip;         /* Source IP address */
-    u32 dst_ip;         /* Destination IP address */
-    u16 src_port;       /* Source port */
-    u16 dst_port;       /* Destination port */
-    u8  protocol;       /* Protocol (TCP=6, UDP=17, etc.) */
-    u8  flags;          /* Protocol-specific flags */
-    u16 reserved;       /* Reserved for future use */
+/*
+ * Runtime configuration. Written by module parameters at load time and by
+ * Generic Netlink later; read locklessly with READ_ONCE() in the hooks.
+ */
+struct kguard_config {
+	bool capture_in;
+	bool capture_out;
+	bool capture_fwd;
+	bool capture_ipv6;
+	bool socket_lookup;
+	u32 wakeup_events;
 };
 
-/* Circular buffer structure */
-struct kguard_buffer {
-    struct kguard_event *events;
-    unsigned int head;
-    unsigned int tail;
-    unsigned int size;
-    spinlock_t lock;
+extern struct kguard_config kguard_cfg;
+extern int kguard_reader_gid;
+
+/* Per-CPU counters (kguard_stats.c) */
+struct kguard_stats {
+	u64 packets;
+	u64 events;
+	u64 dropped;
+	u64 filtered;
+	u64 ns_total;	/* hook time of sampled packets */
+	u64 ns_samples;
 };
 
-/* Global variables (extern declarations) */
-extern struct kguard_buffer *event_buffer;
-extern struct proc_dir_entry *kguard_proc_entry;
+DECLARE_PER_CPU(struct kguard_stats, kguard_pcpu_stats);
 
-/* Function declarations */
+struct kguard_stats_total {
+	u64 packets;
+	u64 events;
+	u64 dropped;
+	u64 filtered;
+	u64 ns_per_packet;
+	u64 ring_fill;
+	u64 netns;
+};
 
-/* Main module functions */
-int kguard_init_module(void);
-void kguard_cleanup_module(void);
+void kguard_stats_read(struct kguard_stats_total *total);
+int kguard_debugfs_init(void);
+void kguard_debugfs_cleanup(void);
 
-/* Buffer management functions */
-int kguard_buffer_init(void);
-void kguard_buffer_cleanup(void);
-int kguard_buffer_add_event(const struct kguard_event *event);
-int kguard_buffer_get_events(struct kguard_event *events, int max_events);
+/* Rings (kguard_ring.c) */
+struct seq_file;
+void kguard_ring_show(struct seq_file *m);
+int kguard_ring_init(unsigned int slots);
+void kguard_ring_cleanup(void);
+void kguard_ring_write(const struct kguard_event *ev);
+bool kguard_ring_has_data(void);
+u64 kguard_ring_fill(void);
+unsigned int kguard_ring_capacity(void);
+unsigned int kguard_ring_drain(struct kguard_event *out, unsigned int max,
+			       u64 *dropped);
+void *kguard_ring_area(void);
+size_t kguard_ring_area_size(void);
+bool kguard_reader_claim(void);
+void kguard_reader_release(void);
 
-/* Netfilter hook functions */
-int kguard_netfilter_init(void);
-void kguard_netfilter_cleanup(void);
-unsigned int kguard_netfilter_hook(void *priv, struct sk_buff *skb,
-                                   const struct nf_hook_state *state);
+/* Character device (kguard_dev.c) */
+int kguard_dev_init(void);
+void kguard_dev_cleanup(void);
+void kguard_dev_wakeup(void);
+bool kguard_reader_allowed(void);
 
-/* Proc filesystem functions */
+/* /proc/kguard (kguard_proc.c) */
 int kguard_proc_init(void);
 void kguard_proc_cleanup(void);
+const char *kguard_protocol_name(u8 protocol);
+const char *kguard_direction_name(u8 direction);
+const char *kguard_ct_name(u8 state);
 
-/* Utility functions */
-static inline u64 kguard_get_timestamp(void)
-{
-    return ktime_get_ns();
-}
+/* Netfilter hooks (kguard_netfilter.c) */
+int kguard_netfilter_init(void);
+void kguard_netfilter_cleanup(void);
+unsigned int kguard_netns_count(void);
 
-static inline const char *kguard_protocol_name(u8 protocol)
-{
-    switch (protocol) {
-    case IPPROTO_TCP:
-        return "TCP";
-    case IPPROTO_UDP:
-        return "UDP";
-    case IPPROTO_ICMP:
-        return "ICMP";
-    default:
-        return "OTHER";
-    }
-}
+/* Generic Netlink (kguard_genl.c) */
+int kguard_genl_init(void);
+void kguard_genl_cleanup(void);
 
-/* Debug macros */
-#ifdef DEBUG
-#define kguard_debug(fmt, ...) \
-    printk(KERN_DEBUG KGUARD_MODULE_NAME ": " fmt "\n", ##__VA_ARGS__)
-#else
-#define kguard_debug(fmt, ...) do { } while (0)
-#endif
-
-#define kguard_info(fmt, ...) \
-    printk(KERN_INFO KGUARD_MODULE_NAME ": " fmt "\n", ##__VA_ARGS__)
-
-#define kguard_warn(fmt, ...) \
-    printk(KERN_WARNING KGUARD_MODULE_NAME ": " fmt "\n", ##__VA_ARGS__)
-
-#define kguard_err(fmt, ...) \
-    printk(KERN_ERR KGUARD_MODULE_NAME ": " fmt "\n", ##__VA_ARGS__)
+/* Logging helpers; kguard_debug is enabled at runtime via dynamic debug */
+#define kguard_debug(fmt, ...)	pr_debug(fmt "\n", ##__VA_ARGS__)
+#define kguard_info(fmt, ...)	pr_info(fmt "\n", ##__VA_ARGS__)
+#define kguard_warn(fmt, ...)	pr_warn(fmt "\n", ##__VA_ARGS__)
+#define kguard_err(fmt, ...)	pr_err(fmt "\n", ##__VA_ARGS__)
 
 #endif /* _KGUARD_H */

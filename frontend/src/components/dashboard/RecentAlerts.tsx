@@ -1,5 +1,6 @@
 import { SecurityAlert, AlertSeverity } from '../../types'
 import { formatDistanceToNow } from 'date-fns'
+import { parseServerDate } from '../../lib/time'
 import { ExclamationTriangleIcon, ShieldExclamationIcon } from '@heroicons/react/24/outline'
 
 interface RecentAlertsProps {
@@ -44,31 +45,27 @@ export function RecentAlerts({ alerts }: RecentAlertsProps) {
           <li key={alert.id} className="px-6 py-4">
             <div className="flex items-start space-x-3">
               <div className="flex-shrink-0">
-                <div className={`inline-flex items-center justify-center w-8 h-8 rounded-full ${getSeverityColor(alert.severity)}`}>
+                <div
+                  className={`inline-flex items-center justify-center w-8 h-8 rounded-full ${getSeverityColor(alert.severity)}`}
+                >
                   {getSeverityIcon(alert.severity)}
                 </div>
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-gray-900">
-                    {alert.title}
-                  </p>
-                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getSeverityColor(alert.severity)}`}>
+                  <p className="text-sm font-medium text-gray-900">{alert.title}</p>
+                  <span
+                    className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getSeverityColor(alert.severity)}`}
+                  >
                     {alert.severity}
                   </span>
                 </div>
-                <p className="text-sm text-gray-500 mt-1 line-clamp-2">
-                  {alert.description}
-                </p>
+                <p className="text-sm text-gray-500 mt-1 line-clamp-2">{alert.description}</p>
                 <div className="flex items-center justify-between mt-2">
                   <p className="text-xs text-gray-400">
-                    {formatDistanceToNow(new Date(alert.timestamp), { addSuffix: true })}
+                    {formatDistanceToNow(parseServerDate(alert.timestamp), { addSuffix: true })}
                   </p>
-                  {alert.src_ip && (
-                    <p className="text-xs text-gray-500 font-mono">
-                      {alert.src_ip}
-                    </p>
-                  )}
+                  {alert.src_ip && <p className="text-xs text-gray-500 font-mono">{alert.src_ip}</p>}
                 </div>
               </div>
             </div>
