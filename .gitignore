@@ -99,3 +99,8 @@ coverage.xml
 
 # Documentation
 docs/_build/
+# KGuard user-space reader binary
+kernel/tools/kguard_reader
+
+# Kernel VM test output
+kernel/tests/out/

@@ -1,7 +1,12 @@
 # KGuard Kernel Module Makefile
 
 obj-m += kguard.o
-kguard-objs := src/kguard_main.o src/kguard_netfilter.o src/kguard_proc.o src/kguard_buffer.o
+kguard-objs := src/kguard_main.o src/kguard_ring.o src/kguard_dev.o \
+	       src/kguard_proc.o src/kguard_netfilter.o src/kguard_genl.o \
+	       src/kguard_stats.o
+
+# KGuard's UAPI header and the tracepoint header (TRACE_INCLUDE_PATH .)
+ccflags-y += -I$(src)/include -I$(src)/src
 
 # Treat every compiler warning in KGuard's own code as an error
 ccflags-y += -Werror
@@ -19,15 +24,26 @@ all:
 # Clean target
 clean:
 	$(MAKE) -C $(KDIR) M=$(PWD) clean
-	rm -f src/*.o
+	rm -f src/*.o tools/kguard_reader
 
-# Kernel coding-style check (checkpatch.pl ships with the kernel headers)
+# Kernel coding-style check (checkpatch.pl ships with the kernel headers).
+# kguard_trace.h is left out: TRACE_EVENT() blocks follow the tracing
+# subsystem's own layout, which checkpatch's generic rules flag.
 CHECKPATCH ?= $(KDIR)/scripts/checkpatch.pl
+CHECKPATCH_FILES := $(filter-out src/kguard_trace.h,$(wildcard src/*.c src/*.h)) \
+		    $(wildcard include/uapi/linux/*.h)
 checkpatch:
-	perl $(CHECKPATCH) --no-tree --strict --terse -f src/*.c src/*.h
+	perl $(CHECKPATCH) --no-tree --strict --terse -f $(CHECKPATCH_FILES)
 
-# Install target (requires root)
+# User-space tools: the zero-copy mmap reader (kguardctl.py needs no build)
+tools: tools/kguard_reader
+tools/kguard_reader: tools/kguard_reader.c include/uapi/linux/kguard.h
+	$(CC) -O2 -Wall -Wextra -Werror -I include/uapi -o $@ $<
+
+# Install target (requires root). insmod does not load dependencies, so
+# load the conntrack and socket-lookup modules first.
 install: all
+	sudo modprobe -a nf_conntrack nf_socket_ipv4 nf_socket_ipv6
 	sudo insmod kguard.ko
 
 # Uninstall target (requires root)
@@ -50,10 +66,11 @@ help:
 	@echo "  all       - Build the kernel module"
 	@echo "  clean     - Clean build artifacts"
 	@echo "  checkpatch - Check kernel coding style (KDIR or CHECKPATCH must point to it)"
+	@echo "  tools     - Build the user-space mmap reader (tools/kguard_reader)"
 	@echo "  install   - Load the kernel module (requires root)"
 	@echo "  uninstall - Unload the kernel module (requires root)"
 	@echo "  status    - Check if module is loaded"
 	@echo "  logs      - View recent kernel logs for KGuard"
 	@echo "  help      - Show this help message"
 
-.PHONY: all clean checkpatch install uninstall status logs help
+.PHONY: all clean checkpatch tools install uninstall status logs help
