@@ -3,7 +3,7 @@
 obj-m += kguard.o
 kguard-objs := src/kguard_main.o src/kguard_ring.o src/kguard_dev.o \
 	       src/kguard_proc.o src/kguard_netfilter.o src/kguard_genl.o \
-	       src/kguard_stats.o
+	       src/kguard_stats.o src/kguard_track.o src/kguard_guard.o
 
 # KGuard's UAPI header and the tracepoint header (TRACE_INCLUDE_PATH .)
 ccflags-y += -I$(src)/include -I$(src)/src

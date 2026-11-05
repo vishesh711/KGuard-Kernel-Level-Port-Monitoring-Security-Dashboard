@@ -4,7 +4,8 @@
  *
  * Hooks LOCAL_IN, LOCAL_OUT and FORWARD for IPv4 and IPv6 in every network
  * namespace (pernet_operations), so traffic inside containers is captured
- * and tagged with its namespace.
+ * and tagged with its namespace. The guard hook (PRE_ROUTING) is registered
+ * with the same operations.
  *
  * The hooks run just after connection tracking (NF_IP_PRI_CONNTRACK + 1),
  * so each packet's conntrack state is known. They never drop packets.
@@ -289,7 +290,18 @@ static unsigned int kguard_hook(void *priv, struct sk_buff *skb,
 	.priv		= (void *)(unsigned long)(dir),	\
 }
 
+#define KGUARD_GUARD_HOOK(family, prio) {		\
+	.hook		= kguard_guard_hook,		\
+	.pf		= family,			\
+	.hooknum	= NF_INET_PRE_ROUTING,		\
+	.priority	= prio,				\
+}
+
 static const struct nf_hook_ops kguard_nf_ops[] = {
+	/* Guard first, before defragmentation and conntrack (kguard_guard.c) */
+	KGUARD_GUARD_HOOK(NFPROTO_IPV4, NF_IP_PRI_FIRST),
+	KGUARD_GUARD_HOOK(NFPROTO_IPV6, NF_IP6_PRI_FIRST),
+	/* Monitoring, just after conntrack */
 	KGUARD_HOOK(NFPROTO_IPV4, NF_INET_LOCAL_IN, NF_IP_PRI_CONNTRACK + 1, KGUARD_DIR_IN),
 	KGUARD_HOOK(NFPROTO_IPV4, NF_INET_LOCAL_OUT, NF_IP_PRI_CONNTRACK + 1, KGUARD_DIR_OUT),
 	KGUARD_HOOK(NFPROTO_IPV4, NF_INET_FORWARD, NF_IP_PRI_CONNTRACK + 1, KGUARD_DIR_FWD),
