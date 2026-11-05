@@ -47,6 +47,13 @@ export function RecentEvents({ events }: RecentEventsProps) {
                     {event.src_ip}:{event.src_port} → {event.dst_ip}:{event.dst_port}
                   </p>
                   <p className="text-sm text-gray-500">
+                    {event.direction && <span className="mr-2 uppercase">{event.direction}</span>}
+                    {event.process_name && (
+                      <span className="mr-2 font-mono">
+                        {event.process_name}
+                        {event.pid != null && ` (${event.pid})`}
+                      </span>
+                    )}
                     {formatDistanceToNow(parseServerDate(event.created_at), { addSuffix: true })}
                   </p>
                 </div>

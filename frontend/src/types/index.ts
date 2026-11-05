@@ -12,6 +12,16 @@ export interface NetworkEvent {
   flags: number
   is_suspicious: boolean
   event_type: string
+  // Context from the kernel module (null when unknown)
+  family?: number | null
+  direction?: 'in' | 'out' | 'fwd' | null
+  ct_state?: string | null
+  netns?: number | null
+  ifindex?: number | null
+  pid?: number | null
+  process_name?: string | null
+  uid?: number | null
+  sock_ino?: number | null
 }
 
 export interface SecurityAlert {
@@ -127,6 +137,8 @@ export interface FilterOptions {
   dst_port?: number
   protocol?: string
   is_suspicious?: boolean
+  direction?: 'in' | 'out' | 'fwd'
+  process_name?: string
   start_time?: Date
   end_time?: Date
 }
