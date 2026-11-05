@@ -4,19 +4,20 @@ Alembic Environment Configuration
 This module configures Alembic for database migrations.
 """
 
-from logging.config import fileConfig
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
-from alembic import context
 import os
 import sys
+from logging.config import fileConfig
+
+from sqlalchemy import engine_from_config, pool
+
+from alembic import context
 
 # Add the app directory to the path
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from app.database import Base
 from app.config import get_database_url
-from app.models import *  # Import all models
+from app.database import Base
+from app.models import NetworkEvent, SecurityAlert, SystemMetric  # noqa: F401  (register models)
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -75,7 +76,7 @@ def run_migrations_online() -> None:
     """
     configuration = config.get_section(config.config_ini_section)
     configuration["sqlalchemy.url"] = get_url()
-    
+
     connectable = engine_from_config(
         configuration,
         prefix="sqlalchemy.",

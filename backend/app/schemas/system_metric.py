@@ -4,9 +4,10 @@ System Metric Pydantic Schemas
 This module contains Pydantic schemas for system metric API endpoints.
 """
 
-from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
 from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SystemMetricBase(BaseModel):
@@ -28,9 +29,8 @@ class SystemMetricResponse(SystemMetricBase):
     """Schema for system metric API responses"""
     id: int = Field(..., description="Unique metric ID")
     timestamp: datetime = Field(..., description="When the metric was recorded")
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SystemMetricFilter(BaseModel):
@@ -51,9 +51,8 @@ class MetricSummary(BaseModel):
     max_value: float = Field(..., description="Maximum value over time period")
     unit: Optional[str] = Field(None, description="Unit of measurement")
     last_updated: datetime = Field(..., description="When metric was last updated")
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SystemHealth(BaseModel):
@@ -67,6 +66,5 @@ class SystemHealth(BaseModel):
     websocket_connections: int = Field(..., description="Number of WebSocket connections")
     uptime_seconds: float = Field(..., description="System uptime in seconds")
     last_updated: datetime = Field(..., description="When health data was last updated")
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)

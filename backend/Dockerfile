@@ -27,7 +27,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 FROM base as development
 
 # Install development dependencies
-RUN pip install --no-cache-dir pytest pytest-asyncio pytest-cov black isort
+COPY requirements-dev.txt .
+RUN pip install --no-cache-dir -r requirements-dev.txt
 
 # Copy application code
 COPY . .

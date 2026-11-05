@@ -4,9 +4,10 @@ Network Event Pydantic Schemas
 This module contains Pydantic schemas for network event API endpoints.
 """
 
-from pydantic import BaseModel, Field
-from typing import Optional
 from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class NetworkEventBase(BaseModel):
@@ -32,9 +33,8 @@ class NetworkEventResponse(NetworkEventBase):
     created_at: datetime = Field(..., description="Database insertion timestamp")
     is_suspicious: bool = Field(..., description="Whether event is suspicious")
     event_type: str = Field(..., description="Event classification type")
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class NetworkEventFilter(BaseModel):
@@ -59,9 +59,8 @@ class NetworkEventStats(BaseModel):
     top_src_ips: list = Field(..., description="Top source IPs by event count")
     top_dst_ports: list = Field(..., description="Top destination ports by event count")
     events_per_hour: list = Field(..., description="Events per hour for the last 24 hours")
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TrafficSummary(BaseModel):
@@ -73,6 +72,5 @@ class TrafficSummary(BaseModel):
     icmp_packets: int = Field(..., description="ICMP packets count")
     unique_connections: int = Field(..., description="Unique connections count")
     suspicious_activity: int = Field(..., description="Suspicious activity count")
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)

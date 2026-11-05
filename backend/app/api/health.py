@@ -4,18 +4,20 @@ Health Check API Endpoints
 This module provides health check and system status endpoints.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from datetime import datetime
-import time
-import psutil
 import os
+import time
+from datetime import datetime
 
-from ..database import get_db, check_db_connection
-from ..schemas.common import HealthCheck
-from ..services.data_collector import data_collector
-from ..services.anomaly_detector import anomaly_detector
+import psutil
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
 from ..config import settings
+from ..database import check_db_connection, get_db
+from ..schemas.common import HealthCheck
+from ..services.anomaly_detector import anomaly_detector
+from ..services.data_collector import data_collector
 
 router = APIRouter(prefix="/api/health", tags=["health"])
 
@@ -31,21 +33,21 @@ async def health_check(db: Session = Depends(get_db)):
     try:
         # Check database connection
         db_healthy = check_db_connection()
-        
+
         # Check kernel module connection
         kernel_status = await data_collector.test_kernel_connection()
         kernel_healthy = kernel_status.get("proc_exists", False) and kernel_status.get("readable", False)
-        
+
         # Calculate uptime
         uptime_seconds = time.time() - startup_time
-        
+
         # Determine overall status
         status = "healthy"
         if not db_healthy:
             status = "unhealthy"
         elif not kernel_healthy:
             status = "degraded"
-        
+
         return HealthCheck(
             status=status,
             timestamp=datetime.utcnow(),
@@ -54,7 +56,7 @@ async def health_check(db: Session = Depends(get_db)):
             kernel_module=kernel_healthy,
             uptime_seconds=uptime_seconds
         )
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Health check failed: {str(e)}")
 
@@ -67,21 +69,21 @@ async def detailed_health_check(db: Session = Depends(get_db)):
     try:
         # Basic health info
         basic_health = await health_check(db)
-        
+
         # System metrics
         cpu_percent = psutil.cpu_percent(interval=1)
         memory = psutil.virtual_memory()
         disk = psutil.disk_usage('/')
-        
+
         # Service statistics
         collector_stats = data_collector.get_stats()
         detector_stats = anomaly_detector.get_stats()
-        
+
         # Kernel module detailed status
         kernel_status = await data_collector.test_kernel_connection()
-        
+
         return {
-            "basic_health": basic_health.dict(),
+            "basic_health": basic_health.model_dump(),
             "system_metrics": {
                 "cpu_usage_percent": cpu_percent,
                 "memory_usage_percent": memory.percent,
@@ -102,7 +104,7 @@ async def detailed_health_check(db: Session = Depends(get_db)):
                 "port_scan_threshold": settings.port_scan_threshold
             }
         }
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Detailed health check failed: {str(e)}")
 
@@ -115,26 +117,26 @@ async def database_health(db: Session = Depends(get_db)):
     try:
         # Test basic connection
         connection_ok = check_db_connection()
-        
+
         if not connection_ok:
             return {
                 "status": "unhealthy",
                 "connection": False,
                 "error": "Cannot connect to database"
             }
-        
+
         # Test query performance
         start_time = time.time()
-        result = db.execute("SELECT 1").fetchone()
+        db.execute(text("SELECT 1")).fetchone()
         query_time = time.time() - start_time
-        
+
         # Get table counts
         from ..models.network_event import NetworkEvent
         from ..models.security_alert import SecurityAlert
-        
+
         event_count = db.query(NetworkEvent).count()
         alert_count = db.query(SecurityAlert).count()
-        
+
         return {
             "status": "healthy",
             "connection": True,
@@ -144,7 +146,7 @@ async def database_health(db: Session = Depends(get_db)):
                 "security_alerts": alert_count
             }
         }
-        
+
     except Exception as e:
         return {
             "status": "unhealthy",
@@ -160,21 +162,21 @@ async def kernel_module_health():
     """
     try:
         status = await data_collector.test_kernel_connection()
-        
-        # Determine health status
-        if status["proc_exists"] and status["readable"] and status["data_valid"]:
-            health_status = "healthy"
+
+        # Healthy once the collector is reading and the kernel is not dropping events
+        if status["proc_exists"] and status["readable"] and status["collector_running"]:
+            health_status = "degraded" if status["kernel_events_dropped"] else "healthy"
         elif status["proc_exists"] and status["readable"]:
             health_status = "degraded"
         else:
             health_status = "unhealthy"
-        
+
         return {
             "status": health_status,
             "details": status,
             "recommendations": _get_kernel_recommendations(status)
         }
-        
+
     except Exception as e:
         return {
             "status": "error",
@@ -185,24 +187,25 @@ async def kernel_module_health():
 def _get_kernel_recommendations(status: dict) -> list:
     """Get recommendations based on kernel module status"""
     recommendations = []
-    
+
     if not status["proc_exists"]:
         recommendations.append("Load the KGuard kernel module: sudo insmod kguard.ko")
         recommendations.append("Check if the module compiled successfully")
         recommendations.append("Verify kernel headers are installed")
-    
+
     elif not status["readable"]:
         recommendations.append("Check file permissions on /proc/kguard")
         recommendations.append("Ensure the application is running with appropriate privileges")
-    
-    elif not status["has_data"]:
-        recommendations.append("Generate network traffic to test packet capture")
-        recommendations.append("Check if Netfilter hooks are registered correctly")
-    
-    elif not status["data_valid"]:
-        recommendations.append("Check kernel module logs: dmesg | grep kguard")
-        recommendations.append("Verify JSON output format from kernel module")
-    
+
+    elif not status["collector_running"]:
+        recommendations.append("Restart the backend so the data collector starts")
+
+    elif status["kernel_events_dropped"]:
+        recommendations.append(
+            "The kernel buffer overflowed; reload the module with a larger buffer_size "
+            "or lower DATA_COLLECTION_INTERVAL"
+        )
+
     return recommendations
 
 
@@ -214,11 +217,11 @@ async def services_health():
     try:
         collector_stats = data_collector.get_stats()
         detector_stats = anomaly_detector.get_stats()
-        
+
         # Determine service health
         collector_healthy = collector_stats["running"] and collector_stats["errors"] < 10
         detector_healthy = detector_stats["events_analyzed"] > 0 or detector_stats["last_analysis"] is None
-        
+
         return {
             "data_collector": {
                 "status": "healthy" if collector_healthy else "degraded",
@@ -230,7 +233,7 @@ async def services_health():
                 "stats": detector_stats
             }
         }
-        
+
     except Exception as e:
         return {
             "status": "error",
@@ -247,13 +250,13 @@ async def system_metrics():
         # CPU metrics
         cpu_percent = psutil.cpu_percent(interval=1)
         cpu_count = psutil.cpu_count()
-        
+
         # Memory metrics
         memory = psutil.virtual_memory()
-        
+
         # Disk metrics
         disk = psutil.disk_usage('/')
-        
+
         # Network metrics (if available)
         try:
             network = psutil.net_io_counters()
@@ -263,13 +266,13 @@ async def system_metrics():
                 "packets_sent": network.packets_sent,
                 "packets_recv": network.packets_recv
             }
-        except:
+        except Exception:
             network_stats = None
-        
+
         # Process metrics
         process = psutil.Process(os.getpid())
         process_memory = process.memory_info()
-        
+
         return {
             "timestamp": datetime.utcnow().isoformat(),
             "cpu": {
@@ -294,6 +297,6 @@ async def system_metrics():
                 "cpu_percent": process.cpu_percent()
             }
         }
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error getting system metrics: {str(e)}")

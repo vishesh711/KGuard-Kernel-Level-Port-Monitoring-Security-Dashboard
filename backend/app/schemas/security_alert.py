@@ -4,10 +4,11 @@ Security Alert Pydantic Schemas
 This module contains Pydantic schemas for security alert API endpoints.
 """
 
-from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
+from typing import Any, Dict, List, Optional
+
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class AlertSeverityEnum(str, Enum):
@@ -51,16 +52,21 @@ class SecurityAlertResponse(SecurityAlertBase):
     timestamp: datetime = Field(..., description="When the alert was triggered")
     created_at: datetime = Field(..., description="Database insertion timestamp")
     related_event_ids: Optional[List[int]] = Field(None, description="IDs of related network events")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional alert metadata")
+    # The database column is alert_metadata ("metadata" is reserved by SQLAlchemy),
+    # but the API keeps the shorter name
+    metadata: Optional[Dict[str, Any]] = Field(
+        None,
+        validation_alias=AliasChoices("alert_metadata", "metadata"),
+        description="Additional alert metadata",
+    )
     acknowledged: bool = Field(..., description="Whether the alert has been acknowledged")
     acknowledged_at: Optional[datetime] = Field(None, description="When the alert was acknowledged")
     acknowledged_by: Optional[str] = Field(None, description="Who acknowledged the alert")
     resolved: bool = Field(..., description="Whether the alert has been resolved")
     resolved_at: Optional[datetime] = Field(None, description="When the alert was resolved")
     resolution_notes: Optional[str] = Field(None, description="Notes about alert resolution")
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AlertAcknowledge(BaseModel):
@@ -99,6 +105,5 @@ class AlertStats(BaseModel):
     alert_types_distribution: Dict[str, int] = Field(..., description="Distribution of alert types")
     alerts_per_hour: List[Dict[str, Any]] = Field(..., description="Alerts per hour for the last 24 hours")
     top_source_ips: List[Dict[str, Any]] = Field(..., description="Top source IPs by alert count")
-    
-    class Config:
-        from_attributes = True
+
+    model_config = ConfigDict(from_attributes=True)

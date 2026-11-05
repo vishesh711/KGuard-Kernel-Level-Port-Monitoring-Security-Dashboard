@@ -8,18 +8,19 @@ of the KGuard security monitoring backend.
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException
+
+import uvicorn
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
-import uvicorn
 
+from .api import alerts_router, events_router, health_router
 from .config import settings
-from .database import init_db, check_db_connection
-from .api import events_router, alerts_router, health_router
-from .services.websocket_manager import connection_manager
-from .services.data_collector import data_collector
+from .database import check_db_connection, init_db
 from .services.anomaly_detector import anomaly_detector
+from .services.data_collector import data_collector
+from .services.websocket_manager import connection_manager
 
 # Configure logging
 logging.basicConfig(
@@ -29,53 +30,55 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def periodic_tasks():
+    """Housekeeping and stats broadcast every 30 seconds"""
+    from .services.websocket_manager import broadcast_stats_update
+
+    while True:
+        try:
+            anomaly_detector.cleanup_old_cooldowns()
+
+            if connection_manager.active_connections:
+                await broadcast_stats_update({
+                    "data_collector": data_collector.get_stats(),
+                    "anomaly_detector": anomaly_detector.get_stats(),
+                    "websocket": connection_manager.get_stats(),
+                })
+
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Error in periodic tasks: {e}")
+            await asyncio.sleep(60)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Application lifespan manager
-    Handles startup and shutdown tasks
-    """
-    # Startup
+    """Start background work on startup and stop it cleanly on shutdown"""
     logger.info("Starting KGuard Backend Service")
-    
+
+    init_db()
+    if not check_db_connection():
+        raise RuntimeError("Database connection failed")
+    logger.info("Database initialized successfully")
+
+    background = [
+        asyncio.create_task(data_collector.start_collection(), name="data_collector"),
+        asyncio.create_task(periodic_tasks(), name="periodic_tasks"),
+    ]
+    logger.info("KGuard Backend Service started successfully")
+
     try:
-        # Initialize database
-        logger.info("Initializing database...")
-        init_db()
-        
-        # Check database connection
-        if not check_db_connection():
-            logger.error("Database connection failed!")
-            raise Exception("Database connection failed")
-        
-        logger.info("Database initialized successfully")
-        
-        # Start data collection service
-        logger.info("Starting data collection service...")
-        asyncio.create_task(data_collector.start_collection())
-        
-        logger.info("KGuard Backend Service started successfully")
-        
-    except Exception as e:
-        logger.error(f"Failed to start application: {e}")
-        raise
-    
-    yield
-    
-    # Shutdown
-    logger.info("Shutting down KGuard Backend Service")
-    
-    try:
-        # Stop data collection
+        yield
+    finally:
+        logger.info("Shutting down KGuard Backend Service")
         data_collector.stop_collection()
-        
-        # Shutdown WebSocket connections
+        for task in background:
+            task.cancel()
+        await asyncio.gather(*background, return_exceptions=True)
         await connection_manager.shutdown()
-        
         logger.info("KGuard Backend Service shut down successfully")
-        
-    except Exception as e:
-        logger.error(f"Error during shutdown: {e}")
 
 
 # Create FastAPI application
@@ -101,7 +104,7 @@ app.add_middleware(
 if not settings.debug:
     app.add_middleware(
         TrustedHostMiddleware,
-        allowed_hosts=["localhost", "127.0.0.1", "*.local"]
+        allowed_hosts=settings.allowed_hosts
     )
 
 # Include API routers
@@ -132,24 +135,24 @@ async def websocket_endpoint(websocket: WebSocket):
         # Accept connection
         client_id = await connection_manager.connect(websocket)
         logger.info(f"WebSocket client {client_id} connected")
-        
+
         # Handle incoming messages
         while True:
             try:
                 # Wait for message from client
                 message = await websocket.receive_text()
                 await connection_manager.handle_client_message(client_id, message)
-                
+
             except WebSocketDisconnect:
                 logger.info(f"WebSocket client {client_id} disconnected")
                 break
             except Exception as e:
                 logger.error(f"Error handling WebSocket message from {client_id}: {e}")
                 break
-    
+
     except Exception as e:
         logger.error(f"WebSocket connection error: {e}")
-    
+
     finally:
         if client_id:
             await connection_manager.disconnect(client_id)
@@ -159,7 +162,7 @@ async def websocket_endpoint(websocket: WebSocket):
 async def global_exception_handler(request, exc):
     """Global exception handler"""
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
-    
+
     return JSONResponse(
         status_code=500,
         content={
@@ -173,52 +176,18 @@ async def global_exception_handler(request, exc):
 async def log_requests(request, call_next):
     """Request logging middleware"""
     start_time = asyncio.get_event_loop().time()
-    
+
     response = await call_next(request)
-    
+
     process_time = asyncio.get_event_loop().time() - start_time
-    
+
     logger.info(
         f"{request.method} {request.url.path} - "
         f"Status: {response.status_code} - "
         f"Time: {process_time:.3f}s"
     )
-    
+
     return response
-
-
-# Background task for periodic operations
-async def periodic_tasks():
-    """Background tasks that run periodically"""
-    while True:
-        try:
-            # Clean up old anomaly detector cooldowns
-            anomaly_detector.cleanup_old_cooldowns()
-            
-            # Broadcast system stats every 30 seconds
-            if connection_manager.active_connections:
-                from .services.websocket_manager import broadcast_stats_update
-                
-                stats = {
-                    "data_collector": data_collector.get_stats(),
-                    "anomaly_detector": anomaly_detector.get_stats(),
-                    "websocket": connection_manager.get_stats()
-                }
-                
-                await broadcast_stats_update(stats)
-            
-            await asyncio.sleep(30)
-            
-        except Exception as e:
-            logger.error(f"Error in periodic tasks: {e}")
-            await asyncio.sleep(60)  # Wait longer on error
-
-
-# Start periodic tasks when the app starts
-@app.on_event("startup")
-async def start_periodic_tasks():
-    """Start background periodic tasks"""
-    asyncio.create_task(periodic_tasks())
 
 
 if __name__ == "__main__":

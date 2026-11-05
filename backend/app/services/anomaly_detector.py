@@ -1,300 +1,285 @@
 """
 Anomaly Detection Service
 
-This service analyzes network events to detect suspicious patterns
-and generate security alerts.
+Looks at network events as they are collected and raises security alerts.
+
+Detection works on connection attempts only (TCP SYN without ACK, and UDP
+packets), not on every packet, so that ordinary traffic such as a large
+download does not look like an attack. Each source IP has a sliding window
+of its recent attempts, so activity spread across several collection cycles
+is still seen as one pattern.
+
+Rules:
+- PORT_SCAN: a source tries at least `port_scan_threshold` distinct ports
+  within the window.
+- HIGH_FREQUENCY: a source makes more than `high_frequency_threshold`
+  attempts per minute (measured over the window).
+- SUSPICIOUS_PORT: a source tries a port in `suspicious_ports`. Skipped for
+  sources already reported as port scanners, which would otherwise raise one
+  alert per port.
+
+Every rule has a cooldown per source so a single attacker does not flood the
+alert list.
 """
 
 import logging
-from typing import List, Dict, Any, Optional, Set
-from datetime import datetime, timedelta
-from collections import defaultdict, Counter
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any, Deque, Dict, List, Optional
 
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, func
+from ..config import settings
 from ..database import SessionLocal
 from ..models.network_event import NetworkEvent
-from ..models.security_alert import SecurityAlert, AlertType, AlertSeverity
-from ..config import settings
+from ..models.security_alert import AlertSeverity, AlertType, SecurityAlert
 
 logger = logging.getLogger(__name__)
 
+TCP_SYN = 0x02
+TCP_ACK = 0x10
 
-@dataclass
-class DetectionPattern:
-    """Data class for detection patterns"""
-    src_ip: str
-    event_count: int
-    unique_ports: Set[int]
-    time_window: timedelta
-    first_seen: datetime
-    last_seen: datetime
-    event_ids: List[int]
+# Most event IDs stored on one alert
+MAX_RELATED_EVENT_IDS = 100
+
+
+@dataclass(frozen=True)
+class Attempt:
+    """One connection attempt remembered in a source's window"""
+    time: float  # seconds since the Unix epoch
+    dst_ip: str
+    dst_port: int
+    event_id: Optional[int]
+
+
+def is_connection_attempt(event: NetworkEvent) -> bool:
+    """True for a TCP SYN without ACK, or any UDP packet"""
+    if event.protocol == "TCP":
+        flags = event.flags or 0
+        return bool(flags & TCP_SYN) and not (flags & TCP_ACK)
+    return event.protocol == "UDP"
+
+
+def event_time(event: NetworkEvent) -> float:
+    """Event time in seconds, from the kernel timestamp when available"""
+    if event.timestamp:
+        return event.timestamp / 1e9
+    if event.created_at:
+        return event.created_at.timestamp()
+    return datetime.utcnow().timestamp()
 
 
 class AnomalyDetectorService:
-    """
-    Service for detecting anomalous network behavior and generating alerts.
-    """
-    
+    """Detects suspicious network behaviour and stores security alerts"""
+
     def __init__(self):
         self.port_scan_threshold = settings.port_scan_threshold
         self.suspicious_ports = set(settings.suspicious_ports)
+        self.high_frequency_threshold = settings.high_frequency_threshold
+        self.window_seconds = float(settings.detection_window_seconds)
+        self.max_attempts_per_source = settings.max_attempts_per_source
         self.alert_cooldown = timedelta(seconds=settings.alert_cooldown_seconds)
-        self.detection_window = timedelta(minutes=10)  # Analysis window
-        
-        # Cache for recent alerts to prevent spam
+        # Kept for analyze_historical_patterns callers
+        self.detection_window = timedelta(seconds=settings.detection_window_seconds)
+
+        # Recent connection attempts per source IP
+        self.windows: Dict[str, Deque[Attempt]] = {}
+
+        # Last alert time per rule and source, to rate-limit alerts
         self.recent_alerts: Dict[str, datetime] = {}
-        
+
         self.stats = {
             "events_analyzed": 0,
+            "connection_attempts": 0,
             "alerts_generated": 0,
             "port_scans_detected": 0,
             "suspicious_ports_detected": 0,
-            "last_analysis": None
+            "high_frequency_detected": 0,
+            "last_analysis": None,
         }
-    
+
+    def reset(self) -> None:
+        """Forget all remembered activity and cooldowns"""
+        self.windows.clear()
+        self.recent_alerts.clear()
+
     async def analyze_events(self, events: List[NetworkEvent]) -> List[SecurityAlert]:
         """
-        Analyze a batch of network events for suspicious patterns
-        
-        Args:
-            events: List of network events to analyze
-            
-        Returns:
-            List[SecurityAlert]: Generated security alerts
+        Add a batch of stored events to the sliding windows and return
+        the alerts this batch triggered. Alerts are saved to the database.
         """
         if not events:
             return []
-        
-        alerts = []
+
         self.stats["events_analyzed"] += len(events)
-        
+
+        # Connection attempts in this batch, grouped by source
+        batch: Dict[str, List[Attempt]] = defaultdict(list)
+        for event in events:
+            if not is_connection_attempt(event):
+                continue
+            attempt = Attempt(
+                time=event_time(event),
+                dst_ip=event.dst_ip,
+                dst_port=event.dst_port,
+                event_id=event.id,
+            )
+            batch[event.src_ip].append(attempt)
+            self._remember(event.src_ip, attempt)
+
+        attempt_count = sum(len(a) for a in batch.values())
+        self.stats["connection_attempts"] += attempt_count
+
+        alerts: List[SecurityAlert] = []
         try:
-            # Group events by source IP for pattern analysis
-            ip_patterns = self._group_events_by_source(events)
-            
-            # Detect port scanning
-            port_scan_alerts = await self._detect_port_scans(ip_patterns)
-            alerts.extend(port_scan_alerts)
-            
-            # Detect suspicious port access
-            suspicious_port_alerts = await self._detect_suspicious_ports(events)
-            alerts.extend(suspicious_port_alerts)
-            
-            # Detect high frequency connections
-            high_freq_alerts = await self._detect_high_frequency(ip_patterns)
-            alerts.extend(high_freq_alerts)
-            
-            # Update statistics
-            self.stats["alerts_generated"] += len(alerts)
-            self.stats["last_analysis"] = datetime.utcnow()
-            
-            logger.info(f"Analyzed {len(events)} events, generated {len(alerts)} alerts")
-            
+            for src_ip, new_attempts in batch.items():
+                window = self.windows.get(src_ip)
+                if not window:
+                    continue
+                alerts.extend(self._check_port_scan(src_ip, window))
+                alerts.extend(self._check_high_frequency(src_ip, window))
+                alerts.extend(self._check_suspicious_ports(src_ip, new_attempts))
         except Exception as e:
             logger.error(f"Error during anomaly analysis: {e}")
-        
-        return alerts
-    
-    def _group_events_by_source(self, events: List[NetworkEvent]) -> Dict[str, DetectionPattern]:
-        """
-        Group events by source IP for pattern analysis
-        
-        Args:
-            events: List of network events
-            
-        Returns:
-            Dict[str, DetectionPattern]: Events grouped by source IP
-        """
-        patterns = {}
-        
-        for event in events:
-            src_ip = event.src_ip
-            
-            if src_ip not in patterns:
-                patterns[src_ip] = DetectionPattern(
+
+        stored = [alert for alert in alerts if self._store_alert(alert)]
+
+        self.stats["alerts_generated"] += len(stored)
+        self.stats["last_analysis"] = datetime.utcnow()
+        if stored:
+            logger.info(f"Analyzed {len(events)} events, generated {len(stored)} alerts")
+        return stored
+
+    def _remember(self, src_ip: str, attempt: Attempt) -> None:
+        """Add an attempt to its source's window and drop expired ones"""
+        window = self.windows.get(src_ip)
+        if window is None:
+            window = deque(maxlen=self.max_attempts_per_source)
+            self.windows[src_ip] = window
+        window.append(attempt)
+
+        cutoff = attempt.time - self.window_seconds
+        while window and window[0].time < cutoff:
+            window.popleft()
+
+    def _check_port_scan(self, src_ip: str, window: Deque[Attempt]) -> List[SecurityAlert]:
+        ports = {a.dst_port for a in window}
+        if len(ports) < self.port_scan_threshold:
+            return []
+
+        key = f"port_scan_{src_ip}"
+        if self._is_in_cooldown(key):
+            return []
+
+        span = window[-1].time - window[0].time
+        alert = SecurityAlert.create_port_scan_alert(
+            src_ip=src_ip,
+            event_count=len(window),
+            event_ids=self._event_ids(window),
+        )
+        alert.description = (
+            f"{src_ip} tried {len(ports)} different ports in {span:.1f} seconds "
+            f"({len(window)} connection attempts), which looks like a port scan."
+        )
+        alert.dst_ip = window[-1].dst_ip
+        alert.alert_metadata = {
+            **(alert.alert_metadata or {}),
+            "unique_ports": len(ports),
+            "sample_ports": sorted(ports)[:50],
+            "window_seconds": round(span, 3),
+            "detection_method": "sliding_window_distinct_ports",
+        }
+
+        self._start_cooldown(key)
+        self.stats["port_scans_detected"] += 1
+        logger.warning(f"Port scan detected from {src_ip}: {len(ports)} ports in {span:.1f}s")
+        return [alert]
+
+    def _check_high_frequency(self, src_ip: str, window: Deque[Attempt]) -> List[SecurityAlert]:
+        per_minute = len(window) * 60.0 / self.window_seconds
+        if per_minute <= self.high_frequency_threshold:
+            return []
+
+        key = f"high_freq_{src_ip}"
+        if self._is_in_cooldown(key):
+            return []
+
+        span = window[-1].time - window[0].time
+        severity = (
+            AlertSeverity.HIGH
+            if per_minute > self.high_frequency_threshold * 10
+            else AlertSeverity.MEDIUM
+        )
+        alert = SecurityAlert(
+            timestamp=datetime.utcnow(),
+            alert_type=AlertType.HIGH_FREQUENCY,
+            severity=severity,
+            title=f"High Frequency Connections from {src_ip}",
+            description=(
+                f"{src_ip} made {len(window)} connection attempts in {span:.1f} seconds "
+                f"(about {per_minute:.0f} per minute; limit {self.high_frequency_threshold})."
+            ),
+            src_ip=src_ip,
+            dst_ip=window[-1].dst_ip,
+            related_event_ids=self._event_ids(window),
+            alert_metadata={
+                "attempts_per_minute": round(per_minute, 1),
+                "event_count": len(window),
+                "window_seconds": round(span, 3),
+                "detection_method": "sliding_window_rate",
+            },
+        )
+
+        self._start_cooldown(key)
+        self.stats["high_frequency_detected"] += 1
+        logger.warning(f"High frequency connections from {src_ip}: {per_minute:.0f}/min")
+        return [alert]
+
+    def _check_suspicious_ports(self, src_ip: str, attempts: List[Attempt]) -> List[SecurityAlert]:
+        # A known scanner touches many sensitive ports; the scan alert covers it
+        if self._is_in_cooldown(f"port_scan_{src_ip}"):
+            return []
+
+        alerts = []
+        for attempt in attempts:
+            if attempt.dst_port not in self.suspicious_ports:
+                continue
+
+            key = f"suspicious_port_{src_ip}_{attempt.dst_port}"
+            if self._is_in_cooldown(key):
+                continue
+
+            alerts.append(
+                SecurityAlert.create_suspicious_port_alert(
                     src_ip=src_ip,
-                    event_count=0,
-                    unique_ports=set(),
-                    time_window=timedelta(),
-                    first_seen=event.created_at,
-                    last_seen=event.created_at,
-                    event_ids=[]
+                    dst_ip=attempt.dst_ip,
+                    dst_port=attempt.dst_port,
+                    event_ids=[attempt.event_id] if attempt.event_id is not None else [],
                 )
-            
-            pattern = patterns[src_ip]
-            pattern.event_count += 1
-            pattern.unique_ports.add(event.dst_port)
-            pattern.event_ids.append(event.id)
-            
-            # Update time window
-            if event.created_at < pattern.first_seen:
-                pattern.first_seen = event.created_at
-            if event.created_at > pattern.last_seen:
-                pattern.last_seen = event.created_at
-            
-            pattern.time_window = pattern.last_seen - pattern.first_seen
-        
-        return patterns
-    
-    async def _detect_port_scans(self, patterns: Dict[str, DetectionPattern]) -> List[SecurityAlert]:
-        """
-        Detect port scanning patterns
-        
-        Args:
-            patterns: Events grouped by source IP
-            
-        Returns:
-            List[SecurityAlert]: Port scan alerts
-        """
-        alerts = []
-        
-        for src_ip, pattern in patterns.items():
-            # Check if this looks like a port scan
-            if (len(pattern.unique_ports) >= self.port_scan_threshold and
-                pattern.time_window.total_seconds() <= 60):  # Within 1 minute
-                
-                # Check cooldown to prevent alert spam
-                alert_key = f"port_scan_{src_ip}"
-                if self._is_in_cooldown(alert_key):
-                    continue
-                
-                # Create port scan alert
-                alert = SecurityAlert.create_port_scan_alert(
-                    src_ip=src_ip,
-                    event_count=pattern.event_count,
-                    event_ids=pattern.event_ids
-                )
-                
-                # Store alert in database
-                if await self._store_alert(alert):
-                    alerts.append(alert)
-                    self.recent_alerts[alert_key] = datetime.utcnow()
-                    self.stats["port_scans_detected"] += 1
-                    
-                    logger.warning(f"Port scan detected from {src_ip}: "
-                                 f"{len(pattern.unique_ports)} unique ports in "
-                                 f"{pattern.time_window.total_seconds():.1f} seconds")
-        
+            )
+            self._start_cooldown(key)
+            self.stats["suspicious_ports_detected"] += 1
+            logger.warning(
+                f"Suspicious port access: {src_ip} -> {attempt.dst_ip}:{attempt.dst_port}"
+            )
         return alerts
-    
-    async def _detect_suspicious_ports(self, events: List[NetworkEvent]) -> List[SecurityAlert]:
-        """
-        Detect access to suspicious ports
-        
-        Args:
-            events: List of network events
-            
-        Returns:
-            List[SecurityAlert]: Suspicious port alerts
-        """
-        alerts = []
-        
-        for event in events:
-            if event.dst_port in self.suspicious_ports:
-                # Check cooldown
-                alert_key = f"suspicious_port_{event.src_ip}_{event.dst_port}"
-                if self._is_in_cooldown(alert_key):
-                    continue
-                
-                # Create suspicious port alert
-                alert = SecurityAlert.create_suspicious_port_alert(
-                    src_ip=event.src_ip,
-                    dst_ip=event.dst_ip,
-                    dst_port=event.dst_port,
-                    event_ids=[event.id]
-                )
-                
-                # Store alert in database
-                if await self._store_alert(alert):
-                    alerts.append(alert)
-                    self.recent_alerts[alert_key] = datetime.utcnow()
-                    self.stats["suspicious_ports_detected"] += 1
-                    
-                    logger.warning(f"Suspicious port access: {event.src_ip} -> "
-                                 f"{event.dst_ip}:{event.dst_port}")
-        
-        return alerts
-    
-    async def _detect_high_frequency(self, patterns: Dict[str, DetectionPattern]) -> List[SecurityAlert]:
-        """
-        Detect high frequency connection attempts
-        
-        Args:
-            patterns: Events grouped by source IP
-            
-        Returns:
-            List[SecurityAlert]: High frequency alerts
-        """
-        alerts = []
-        high_freq_threshold = 50  # connections per minute
-        
-        for src_ip, pattern in patterns.items():
-            if pattern.time_window.total_seconds() > 0:
-                freq = pattern.event_count / (pattern.time_window.total_seconds() / 60)
-                
-                if freq > high_freq_threshold:
-                    # Check cooldown
-                    alert_key = f"high_freq_{src_ip}"
-                    if self._is_in_cooldown(alert_key):
-                        continue
-                    
-                    # Create high frequency alert
-                    alert = SecurityAlert(
-                        timestamp=datetime.utcnow(),
-                        alert_type=AlertType.HIGH_FREQUENCY,
-                        severity=AlertSeverity.MEDIUM,
-                        title=f"High Frequency Connections from {src_ip}",
-                        description=f"Detected {pattern.event_count} connections from {src_ip} "
-                                   f"in {pattern.time_window.total_seconds():.1f} seconds "
-                                   f"({freq:.1f} connections/minute)",
-                        src_ip=src_ip,
-                        related_event_ids=pattern.event_ids,
-                        metadata={
-                            "frequency": freq,
-                            "event_count": pattern.event_count,
-                            "time_window_seconds": pattern.time_window.total_seconds()
-                        }
-                    )
-                    
-                    # Store alert in database
-                    if await self._store_alert(alert):
-                        alerts.append(alert)
-                        self.recent_alerts[alert_key] = datetime.utcnow()
-                        
-                        logger.warning(f"High frequency connections from {src_ip}: "
-                                     f"{freq:.1f} connections/minute")
-        
-        return alerts
-    
+
+    @staticmethod
+    def _event_ids(window: Deque[Attempt]) -> List[int]:
+        """Most recent event IDs in the window, capped"""
+        ids = [a.event_id for a in window if a.event_id is not None]
+        return ids[-MAX_RELATED_EVENT_IDS:]
+
     def _is_in_cooldown(self, alert_key: str) -> bool:
-        """
-        Check if an alert type is in cooldown period
-        
-        Args:
-            alert_key: Unique key for the alert type
-            
-        Returns:
-            bool: True if in cooldown period
-        """
-        if alert_key not in self.recent_alerts:
+        last_alert = self.recent_alerts.get(alert_key)
+        if last_alert is None:
             return False
-        
-        last_alert = self.recent_alerts[alert_key]
         return datetime.utcnow() - last_alert < self.alert_cooldown
-    
-    async def _store_alert(self, alert: SecurityAlert) -> bool:
-        """
-        Store alert in database
-        
-        Args:
-            alert: Security alert to store
-            
-        Returns:
-            bool: True if successfully stored
-        """
+
+    def _start_cooldown(self, alert_key: str) -> None:
+        self.recent_alerts[alert_key] = datetime.utcnow()
+
+    def _store_alert(self, alert: SecurityAlert) -> bool:
+        """Save an alert. Returns True on success."""
         db = SessionLocal()
         try:
             db.add(alert)
@@ -307,30 +292,18 @@ class AnomalyDetectorService:
             return False
         finally:
             db.close()
-    
+
     async def analyze_historical_patterns(self, hours: int = 24) -> Dict[str, Any]:
-        """
-        Analyze historical patterns for baseline establishment
-        
-        Args:
-            hours: Number of hours to analyze
-            
-        Returns:
-            Dict[str, Any]: Analysis results
-        """
+        """Summarise stored events from the last N hours"""
         db = SessionLocal()
         try:
-            # Get events from the last N hours
             cutoff_time = datetime.utcnow() - timedelta(hours=hours)
-            events = db.query(NetworkEvent).filter(
-                NetworkEvent.created_at >= cutoff_time
-            ).all()
-            
+            events = db.query(NetworkEvent).filter(NetworkEvent.created_at >= cutoff_time).all()
+
             if not events:
                 return {"error": "No events found in time range"}
-            
-            # Analyze patterns
-            analysis = {
+
+            return {
                 "time_range_hours": hours,
                 "total_events": len(events),
                 "unique_src_ips": len(set(e.src_ip for e in events)),
@@ -339,59 +312,60 @@ class AnomalyDetectorService:
                 "top_src_ips": self._get_top_ips([e.src_ip for e in events]),
                 "top_dst_ports": self._get_top_ports([e.dst_port for e in events]),
                 "suspicious_events": len([e for e in events if e.is_suspicious]),
-                "hourly_distribution": self._get_hourly_distribution(events)
+                "hourly_distribution": self._get_hourly_distribution(events),
             }
-            
-            return analysis
-            
         except Exception as e:
             logger.error(f"Error analyzing historical patterns: {e}")
             return {"error": str(e)}
         finally:
             db.close()
-    
+
     def _get_top_ips(self, ips: List[str], limit: int = 10) -> List[Dict[str, Any]]:
-        """Get top IPs by frequency"""
-        counter = Counter(ips)
-        return [{"ip": ip, "count": count} for ip, count in counter.most_common(limit)]
-    
+        return [{"ip": ip, "count": count} for ip, count in Counter(ips).most_common(limit)]
+
     def _get_top_ports(self, ports: List[int], limit: int = 10) -> List[Dict[str, Any]]:
-        """Get top ports by frequency"""
-        counter = Counter(ports)
-        return [{"port": port, "count": count} for port, count in counter.most_common(limit)]
-    
+        return [{"port": port, "count": count} for port, count in Counter(ports).most_common(limit)]
+
     def _get_hourly_distribution(self, events: List[NetworkEvent]) -> List[Dict[str, Any]]:
-        """Get hourly event distribution"""
-        hourly_counts = defaultdict(int)
+        hourly_counts: Dict[int, int] = defaultdict(int)
         for event in events:
-            hour = event.created_at.hour
-            hourly_counts[hour] += 1
-        
+            hourly_counts[event.created_at.hour] += 1
         return [{"hour": hour, "count": count} for hour, count in sorted(hourly_counts.items())]
-    
+
     def get_stats(self) -> Dict[str, Any]:
-        """Get detection statistics"""
         return {
             **self.stats,
             "port_scan_threshold": self.port_scan_threshold,
+            "high_frequency_threshold": self.high_frequency_threshold,
+            "detection_window_seconds": self.window_seconds,
             "suspicious_ports_count": len(self.suspicious_ports),
             "alert_cooldown_seconds": self.alert_cooldown.total_seconds(),
-            "active_cooldowns": len(self.recent_alerts)
+            "active_cooldowns": len(self.recent_alerts),
+            "tracked_sources": len(self.windows),
         }
-    
+
     def cleanup_old_cooldowns(self) -> None:
-        """Clean up expired cooldown entries"""
-        current_time = datetime.utcnow()
+        """Drop expired cooldowns and sources with no recent activity"""
+        now = datetime.utcnow()
         expired_keys = [
             key for key, timestamp in self.recent_alerts.items()
-            if current_time - timestamp > self.alert_cooldown
+            if now - timestamp > self.alert_cooldown
         ]
-        
         for key in expired_keys:
             del self.recent_alerts[key]
-        
-        if expired_keys:
-            logger.debug(f"Cleaned up {len(expired_keys)} expired cooldown entries")
+
+        cutoff = now.timestamp() - self.window_seconds
+        idle_sources = [
+            src for src, window in self.windows.items()
+            if not window or window[-1].time < cutoff
+        ]
+        for src in idle_sources:
+            del self.windows[src]
+
+        if expired_keys or idle_sources:
+            logger.debug(
+                f"Cleaned up {len(expired_keys)} cooldowns and {len(idle_sources)} idle sources"
+            )
 
 
 # Global instance

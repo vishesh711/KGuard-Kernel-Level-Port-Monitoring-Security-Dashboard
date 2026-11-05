@@ -1,48 +1,18 @@
-# KGuard Backend Dependencies
+# KGuard backend runtime dependencies
+# Tested on Python 3.11, 3.12 and 3.13
 
-# FastAPI and ASGI server
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
+# Web framework and server
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30
 
 # Database
-sqlalchemy==2.0.23
-alembic==1.12.1
+sqlalchemy>=2.0.30,<2.1
+alembic>=1.13
 
-# Data validation and serialization
-pydantic==2.5.0
-pydantic-settings==2.1.0
+# Settings and validation
+pydantic>=2.7,<3
+pydantic-settings>=2.3,<3
+python-dotenv>=1.0
 
-# WebSocket support
-websockets==12.0
-
-# HTTP client for testing
-httpx==0.25.2
-
-# Development and testing
-pytest==7.4.3
-pytest-asyncio==0.21.1
-pytest-cov==4.1.0
-
-# System monitoring
-psutil==5.9.6
-
-# Logging and monitoring
-structlog==23.2.0
-
-# Security
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-python-multipart==0.0.6
-
-# Background tasks
-celery==5.3.4
-redis==5.0.1
-
-# Data processing
-pandas==2.1.4
-numpy==1.25.2
-
-# Environment management
-python-dotenv==1.0.0
-
-# CORS middleware (handled by FastAPI built-in)
+# System metrics for /api/health
+psutil>=5.9
