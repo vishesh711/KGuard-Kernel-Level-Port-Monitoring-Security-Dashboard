@@ -28,6 +28,7 @@ from ..config import settings
 from ..database import SessionLocal
 from ..models.network_event import NetworkEvent
 from .anomaly_detector import anomaly_detector
+from .kernel_alerts import kernel_alerts
 from .kguard_device import KGuardDevice
 from .process_resolver import ProcessResolver
 from .websocket_manager import broadcast_network_event, broadcast_security_alert
@@ -73,6 +74,7 @@ class DataCollectorService:
         logger.info(f"Starting data collection (source: {self.source_setting})")
         try:
             while self.running:
+                kernel_alerts.check()
                 await self.collect_once()
                 await asyncio.sleep(self.collection_interval)
         finally:
@@ -246,6 +248,13 @@ class DataCollectorService:
         Insert events in one statement and return them with their new IDs.
         The returned objects stay usable after the session closes.
         """
+        # Sources the kernel alerted on recently
+        flagged = {}
+        for ip in {e["src_ip"] for e in events}:
+            event_type = kernel_alerts.flag_for(ip)
+            if event_type:
+                flagged[ip] = event_type
+
         rows = [
             {
                 "timestamp": e["timestamp"],
@@ -255,8 +264,8 @@ class DataCollectorService:
                 "dst_port": int(e["dst_port"]),
                 "protocol": e["protocol"],
                 "flags": int(e.get("flags", 0) or 0),
-                "is_suspicious": False,
-                "event_type": "normal",
+                "is_suspicious": e["src_ip"] in flagged,
+                "event_type": flagged.get(e["src_ip"], "normal"),
                 **self._context(e),
             }
             for e in events
@@ -363,6 +372,7 @@ class DataCollectorService:
                 if self.stats["last_collection"] else None
             ),
             "kernel_events_dropped": self.stats["kernel_events_dropped"],
+            "kernel_detection": kernel_alerts.active,
             "error": error,
         }
 

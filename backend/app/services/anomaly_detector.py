@@ -90,6 +90,10 @@ class AnomalyDetectorService:
         # Recent connection attempts per source IP
         self.windows: Dict[str, Deque[Attempt]] = {}
 
+        # True while the kernel module reports scans and SYN floods itself
+        # (see kernel_alerts.py); the matching rules here are then skipped
+        self.kernel_detection = False
+
         # Last alert time per rule and source, to rate-limit alerts
         self.recent_alerts: Dict[str, datetime] = {}
 
@@ -141,8 +145,9 @@ class AnomalyDetectorService:
                 window = self.windows.get(src_ip)
                 if not window:
                     continue
-                alerts.extend(self._check_port_scan(src_ip, window))
-                alerts.extend(self._check_high_frequency(src_ip, window))
+                if not self.kernel_detection:
+                    alerts.extend(self._check_port_scan(src_ip, window))
+                    alerts.extend(self._check_high_frequency(src_ip, window))
                 alerts.extend(self._check_suspicious_ports(src_ip, new_attempts))
         except Exception as e:
             logger.error(f"Error during anomaly analysis: {e}")
@@ -348,6 +353,7 @@ class AnomalyDetectorService:
             "alert_cooldown_seconds": self.alert_cooldown.total_seconds(),
             "active_cooldowns": len(self.recent_alerts),
             "tracked_sources": len(self.windows),
+            "kernel_detection": self.kernel_detection,
         }
 
     def cleanup_old_cooldowns(self) -> None:
