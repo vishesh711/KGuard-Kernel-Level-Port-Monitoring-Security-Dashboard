@@ -20,11 +20,11 @@ import socket
 import struct
 from typing import Any, Dict, List, Optional
 
-# struct kguard_event (96 bytes) and struct kguard_mmap_info
-EVENT = struct.Struct("<QQ16s16sHHBBBBBB2xIIII16s4x")
+# struct kguard_event (128 bytes) and struct kguard_mmap_info
+EVENT = struct.Struct("<QQ16s16sHHBBBBBB2xIIII16sHHHBB8sBB2x16x")
 INFO = struct.Struct("<IIIIIIQQQ")
 MAGIC = 0x4452474B
-ABI_VERSION = 1
+ABI_VERSION = 2
 
 HEAD_OFFSET = 0
 TAIL_OFFSET = 64
@@ -39,11 +39,20 @@ EVF_FRAGMENT = 0x01
 EVF_PROC = 0x02
 EVF_SOCK = 0x04
 
+# SYN option kinds in p0f notation (same letters as /proc/kguard)
+TCP_OPTION_LETTERS = {0: "E", 1: "N", 2: "M", 3: "W", 4: "S", 8: "T"}
+IPF_DF = 0x01
+
+
+def options_text(opts: bytes, count: int) -> str:
+    return ",".join(TCP_OPTION_LETTERS.get(k, f"?{k}") for k in opts[:min(count, 8)])
+
 
 def decode_event(raw: bytes) -> Dict[str, Any]:
-    """Turn one 96-byte record into the same shape as /proc/kguard JSON"""
+    """Turn one 128-byte record into the same shape as /proc/kguard JSON"""
     (timestamp, sock_ino, src, dst, src_port, dst_port, family, protocol, tcp_flags,
-     direction, ct_state, info, netns, pid, uid, ifindex, comm) = EVENT.unpack(raw)
+     direction, ct_state, info, netns, pid, uid, ifindex, comm, ip_len, tcp_window, tcp_mss,
+     ttl, tcp_wscale, tcp_opts, tcp_opts_len, ip_flags) = EVENT.unpack(raw)
     if family == AF_INET6:
         src_ip = socket.inet_ntop(socket.AF_INET6, src)
         dst_ip = socket.inet_ntop(socket.AF_INET6, dst)
@@ -69,6 +78,13 @@ def decode_event(raw: bytes) -> Dict[str, Any]:
         "comm": comm.split(b"\0", 1)[0].decode(errors="replace") if has_proc else "",
         "uid": uid if has_sock else -1,
         "sock_ino": sock_ino if has_sock else 0,
+        "ttl": ttl,
+        "ip_len": ip_len,
+        "df": bool(ip_flags & IPF_DF),
+        "tcp_window": tcp_window,
+        "tcp_mss": tcp_mss,
+        "tcp_wscale": tcp_wscale if tcp_opts_len and tcp_wscale != 0xFF else -1,
+        "tcp_options": options_text(tcp_opts, tcp_opts_len),
     }
 
 
@@ -76,6 +92,8 @@ def encode_event(event: Dict[str, Any]) -> bytes:
     """Inverse of decode_event (used to build fake devices in tests)"""
     v6 = event.get("family") == 6
     af = socket.AF_INET6 if v6 else socket.AF_INET
+    letters = {v: k for k, v in TCP_OPTION_LETTERS.items()}
+    opts = [letters.get(x, 0) for x in event.get("tcp_options", "").split(",") if x][:8]
     info = 0
     if event.get("pid", -1) >= 0:
         info |= EVF_PROC
@@ -99,6 +117,14 @@ def encode_event(event: Dict[str, Any]) -> bytes:
         max(event.get("uid", 0), 0),
         event.get("ifindex", 0),
         event.get("comm", "").encode()[:15],
+        event.get("ip_len", 0),
+        event.get("tcp_window", 0),
+        event.get("tcp_mss", 0),
+        event.get("ttl", 0),
+        event.get("tcp_wscale", -1) if event.get("tcp_wscale", -1) >= 0 else 0xFF,
+        bytes(opts),
+        len(opts),
+        IPF_DF if event.get("df") else 0,
     )
 
 
@@ -162,12 +188,18 @@ class KGuardDevice:
         os.close(self.fd)
 
 
-def build_fake_device(path: str, rings: List[List[Dict[str, Any]]], slots: int = 64,
+def build_fake_device(path: str, rings: List[List[Dict[str, Any]]], slots: Optional[int] = None,
                       dropped: int = 0) -> None:
     """
     Write a regular file with the same layout as the /dev/kguard mapping.
-    KGuardDevice can open it like the real device; used by tests.
+    KGuardDevice can open it like the real device; used by tests. By default
+    each ring gets the smallest power-of-two size (at least 64) that holds
+    the most events given for any ring.
     """
+    if slots is None:
+        slots = 64
+        while slots < max((len(r) for r in rings), default=0):
+            slots *= 2
     page = mmap.PAGESIZE
     stride = page + ((slots * EVENT.size + page - 1) // page) * page
     size = page + len(rings) * stride

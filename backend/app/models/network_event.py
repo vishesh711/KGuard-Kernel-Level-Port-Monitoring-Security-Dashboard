@@ -62,6 +62,16 @@ class NetworkEvent(Base):
     host_id = Column(Integer, nullable=True, index=True,
                      comment="Agent that reported the event; empty for this server's own collector")
 
+    # Packet header details (kernel ABI v2); empty when not known
+    ttl = Column(SmallInteger, nullable=True, comment="IPv4 TTL or IPv6 hop limit")
+    ip_len = Column(Integer, nullable=True, comment="IP packet length in bytes")
+    df = Column(Boolean, nullable=True, comment="IPv4 don't-fragment bit")
+    tcp_window = Column(Integer, nullable=True, comment="TCP window field (unscaled)")
+    tcp_mss = Column(Integer, nullable=True, comment="SYN: MSS option")
+    tcp_wscale = Column(SmallInteger, nullable=True, comment="SYN: window scale option")
+    tcp_options = Column(String(40), nullable=True, comment="SYN: option order, e.g. M,S,T,N,W")
+    os_guess = Column(String(24), nullable=True, comment="SYN: sender OS or tool from its TCP fingerprint")
+
     # Classification
     is_suspicious = Column(Boolean, default=False, index=True,
                           comment="Whether this event was flagged as suspicious")
@@ -107,6 +117,14 @@ class NetworkEvent(Base):
             "uid": self.uid,
             "sock_ino": self.sock_ino,
             "host_id": self.host_id,
+            "ttl": self.ttl,
+            "ip_len": self.ip_len,
+            "df": self.df,
+            "tcp_window": self.tcp_window,
+            "tcp_mss": self.tcp_mss,
+            "tcp_wscale": self.tcp_wscale,
+            "tcp_options": self.tcp_options,
+            "os_guess": self.os_guess,
         }
 
     @classmethod

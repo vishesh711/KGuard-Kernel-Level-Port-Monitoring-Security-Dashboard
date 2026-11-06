@@ -24,6 +24,16 @@ describe('RecentEvents', () => {
     expect(screen.getByText('nc (4321)')).toBeInTheDocument()
   })
 
+  it('names the sender from its TCP fingerprint', () => {
+    render(
+      <RecentEvents
+        events={[{ ...base, os_guess: 'nmap', tcp_options: 'M', ttl: 47 }, { ...base, id: 2, os_guess: 'unknown' }]}
+      />,
+    )
+    expect(screen.getByText('nmap')).toHaveAttribute('title', 'TCP fingerprint: M, TTL 47')
+    expect(screen.queryByText('unknown')).not.toBeInTheDocument()
+  })
+
   it('still renders events from older modules without that context', () => {
     render(<RecentEvents events={[base]} />)
     expect(screen.getByText('10.0.0.5:40000 → 10.0.0.1:4444')).toBeInTheDocument()

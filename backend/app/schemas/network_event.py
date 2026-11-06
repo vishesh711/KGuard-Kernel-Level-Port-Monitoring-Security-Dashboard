@@ -43,6 +43,14 @@ class NetworkEventResponse(NetworkEventBase):
     uid: Optional[int] = Field(None, description="User that owns the socket")
     sock_ino: Optional[int] = Field(None, description="Socket inode number")
     host_id: Optional[int] = Field(None, description="Reporting agent (empty: this server)")
+    ttl: Optional[int] = Field(None, description="IPv4 TTL or IPv6 hop limit")
+    ip_len: Optional[int] = Field(None, description="IP packet length in bytes")
+    df: Optional[bool] = Field(None, description="IPv4 don't-fragment bit")
+    tcp_window: Optional[int] = Field(None, description="TCP window field (unscaled)")
+    tcp_mss: Optional[int] = Field(None, description="SYN: MSS option")
+    tcp_wscale: Optional[int] = Field(None, description="SYN: window scale option")
+    tcp_options: Optional[str] = Field(None, description="SYN: TCP option order, e.g. M,S,T,N,W")
+    os_guess: Optional[str] = Field(None, description="SYN: sender OS or tool from its TCP fingerprint")
 
     model_config = ConfigDict(from_attributes=True)
 

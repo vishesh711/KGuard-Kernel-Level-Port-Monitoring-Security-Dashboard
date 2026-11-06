@@ -44,7 +44,7 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
   *Status:* Done. `-Werror` in the kernel Makefile; builds clean against 6.8 headers.
 - [ ] **F0.6 CI pipeline.** GitHub Actions workflow running F0.2–F0.5 on every push and PR.
   *Done when:* the workflow is green on `main`.
-  *Status:* Workflow added in `.github/workflows/ci.yml` (backend matrix, frontend, kernel). Tick once the first run is green.
+  *Status:* Green on the `claude/lucid-gates-38lxek` branch (backend 3.11-3.13, frontend, kernel on the runners' Linux 7.0, agent). Tick once it is green on `main` after merging.
 - [x] **F0.7 Code style.** Add ruff (Python), Prettier (frontend) and `checkpatch.pl --no-tree` (kernel) to CI.
   *Done when:* all three run in CI with no errors.
   *Status:* Done. ruff, Prettier and `make checkpatch` (strict) all pass with zero findings.
@@ -156,26 +156,34 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
 
 ## Phase 5 — Deep network detection
 
-- [ ] **N5.0 Reduce sensitive-port noise.** Ports 80 and 443 are in the default `SUSPICIOUS_PORTS`, so every new web client raises a MEDIUM alert on a web server. Drop them from the default or score them lower, and add an allowlist of trusted sources.
+- [x] **N5.0 Reduce sensitive-port noise.** Ports 80 and 443 are in the default `SUSPICIOUS_PORTS`, so every new web client raises a MEDIUM alert on a web server. Drop them from the default or score them lower, and add an allowlist of trusted sources.
   *Done when:* normal web traffic to a web server raises no alerts.
-- [ ] **N5.1 Scan types from TCP flags.** Classify SYN, FIN, NULL, Xmas, ACK and Maimon scans, and UDP scans (from ICMP port-unreachable replies).
+  *Status:* Done. 80 and 443 removed from the default SUSPICIOUS_PORTS; TRUSTED_SOURCES (CIDRs) skips detection. Verified in scripts/detection_lab.py: 30 web requests to port 443 raise no alerts.
+- [x] **N5.1 Scan types from TCP flags.** Classify SYN, FIN, NULL, Xmas, ACK and Maimon scans, and UDP scans (from ICMP port-unreachable replies).
   *Done when:* each `nmap` scan type (`-sS -sF -sN -sX -sA -sU`) produces the correctly labeled alert.
-- [ ] **N5.2 SYN flood.** Track half-open connections per destination; note whether SYN cookies are on (`net.ipv4.tcp_syncookies`).
+  *Status:* Done. Probe types classified from TCP flags plus conntrack state (backend/app/services/probes.py, signatures observed for every nmap type on Linux 6.8); alerts are titled by scan type. SYN/UDP come from the kernel guard (labelled from events), stealth scans from the backend. Verified: nmap -sS -sF -sN -sX -sA -sM -sU each give the right label.
+- [x] **N5.2 SYN flood.** Track half-open connections per destination; note whether SYN cookies are on (`net.ipv4.tcp_syncookies`).
   *Done when:* `hping3 --flood -S` raises a SYN flood alert.
-- [ ] **N5.3 Brute force.** Repeated short connections to SSH, RDP or database ports from one source in a window.
+  *Status:* Done. Half-open connections per destination (SYN without a completing ACK) whatever the source, so spoofed random-source floods are caught; alert includes net.ipv4.tcp_syncookies. Verified: hping3 -S --flood --rand-source raises SYN_FLOOD.
+- [x] **N5.3 Brute force.** Repeated short connections to SSH, RDP or database ports from one source in a window.
   *Done when:* a `hydra` run against SSH raises a `BRUTE_FORCE` alert.
-- [ ] **N5.4 Passive OS fingerprinting.** Guess the sender's OS from initial TTL, window size, MSS and TCP option order on SYN packets (p0f-style signatures).
+  *Status:* Done. Repeated new connections to login/database ports (BRUTE_FORCE_PORTS, threshold 10 per window). Verified with 15 rapid connections to port 22 (hydra is not available in the test VM).
+- [x] **N5.4 Passive OS fingerprinting.** Guess the sender's OS from initial TTL, window size, MSS and TCP option order on SYN packets (p0f-style signatures).
   *Done when:* Linux, Windows and macOS hosts are recognized in the test lab.
-- [ ] **N5.5 Spoofed traffic.** Flag TTL jumps for the same source, bogon/martian sources, and packets arriving on an unexpected interface.
+  *Status:* Done. Event ABI v2 (128 bytes) carries TTL, IP length, DF, TCP window and, for SYNs, MSS, window scale and option order, filled by both the kernel module and the eBPF program (bounded option loop accepted by the verifier). backend/app/services/fingerprint.py matches p0f-style signatures (Linux, Windows, macOS, FreeBSD, OpenBSD) and scanning tools (nmap, masscan, zmap, crafted); events store os_guess and alerts name the sender. Verified in scripts/detection_lab.py: a real Linux SYN (curl) is recognised as Linux; Windows and macOS are recognised from their SYN signatures replayed with scapy (no Windows/macOS machines in the test VM); nmap -sS is named nmap.
+- [x] **N5.5 Spoofed traffic.** Flag TTL jumps for the same source, bogon/martian sources, and packets arriving on an unexpected interface.
   *Done when:* scapy-spoofed packets are flagged.
-- [ ] **N5.6 Amplification attacks.** Detect DNS (ANY), NTP (monlist), memcached and SSDP reflection: large responses to small requests, or unsolicited responses.
+  *Status:* Done. Kernel guard (PRE_ROUTING, before the allowlist): loopback, own-address and martian sources on a real interface raise KGUARD_ALERT_SPOOF with reason and interface, one per reason per 10 s counting packets, dropped when enforcing. Backend: TTL jumps per source (same initial TTL, ignoring scanner-crafted packets and known scanners) and bogon sources aggregated per category. "Unexpected interface" is covered by the kernel check for this host's own addresses. Verified: scapy-forged 127.0.0.1, own-address, multicast, 198.18.0.7 and TTL-shifted packets are flagged (kernel guard tests and detection lab).
+- [x] **N5.6 Amplification attacks.** Detect DNS (ANY), NTP (monlist), memcached and SSDP reflection: large responses to small requests, or unsolicited responses.
   *Done when:* replayed amplification captures raise alerts.
+  *Status:* Done. Victim side: unsolicited (conntrack new/invalid, or no query seen without conntrack) large UDP replies from reflector ports per destination and service; reflector side: this host's UDP service replying with many times the request bytes. Verified with scapy replays of DNS ANY answers (1412 bytes) and NTP monlist pages (468 bytes), and a host service amplifying 39x. memcached and SSDP use the same rule with their ports; not replayed separately.
 - [ ] **N5.7 DNS tunneling.** Parse DNS queries; score long, high-entropy subdomains and unusual record types (TXT, NULL).
   *Done when:* an `iodine` or `dnscat2` session is detected, with a measured false-positive rate on normal browsing.
 - [ ] **N5.8 TLS fingerprinting.** Parse the TLS ClientHello; compute JA3/JA4 and record the requested server name (SNI). Match against a list of known malware fingerprints.
   *Done when:* fingerprints for `curl`, Chrome and Python `requests` are recorded correctly.
-- [ ] **N5.9 Sliding-window baseline.** Learn normal per-hour traffic per host/port; alert on large deviations.
+- [x] **N5.9 Sliding-window baseline.** Learn normal per-hour traffic per host/port; alert on large deviations.
   *Done when:* a replayed traffic spike raises an `UNUSUAL_TRAFFIC` alert.
+  *Status:* Done. EWMA mean/variance of incoming connection attempts per host and port per minute; UNUSUAL_TRAFFIC after warm-up when far above mean (6 sigma and 5x); spikes are not learned. Adapts to the recent past; no time-of-day model. Verified with replayed spikes in unit tests.
 - [ ] **N5.10 Flow export.** Group packets into flows and export IPFIX (or NetFlow v9).
   *Done when:* `nfdump` or Wireshark decodes the exported flows.
 - [ ] **N5.11 Packet capture on alert.** Keep a short rolling buffer; on a high-severity alert, save the surrounding packets as `.pcap`.

@@ -14,6 +14,7 @@ Needs: python3, curl, nc (OpenBSD netcat), ip (iproute2), nmap.
 """
 
 import errno
+import json
 import os
 import re
 import socket
@@ -242,6 +243,38 @@ def test_process_attribution():
     check("conntrack: later packets are ESTABLISHED", len(established) > 0)
 
 
+def test_packet_headers():
+    """Event v2: TTL, length, DF, and the SYN's window and option order (OS fingerprinting)"""
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 4446))
+    srv.listen()
+    with KGuardDevice() as dev:
+        dev.read()
+        socket.create_connection(("127.0.0.1", 4446), timeout=2).close()
+        events, _ = collect(dev, 0.5)
+    srv.close()
+    syn = [e for e in events if e["dst_port"] == 4446 and e["flags"] == 0x02 and e["direction"] == "out"]
+    e = syn[0] if syn else {}
+    check("SYN carries TTL 64, DF and its length (20 + 20 + 20 options)",
+          (e.get("ttl"), e.get("df"), e.get("ip_len")) == (64, True, 60),
+          (e.get("ttl"), e.get("df"), e.get("ip_len")))
+    check("SYN carries Linux's TCP option order, MSS and window scale",
+          e.get("tcp_options") == "M,S,T,N,W" and e.get("tcp_mss") == 65495 and e.get("tcp_wscale", -1) >= 0,
+          f"options={e.get('tcp_options')} mss={e.get('tcp_mss')} wscale={e.get('tcp_wscale')}")
+    acks = [e for e in events if e["dst_port"] == 4446 and e["flags"] == 0x10]
+    check("non-SYN packets carry no options",
+          acks and all(a["tcp_options"] == "" and a["tcp_wscale"] == -1 for a in acks))
+
+    sink, port = udp_sink()
+    send_udp(port, 1)  # one byte of payload
+    proc = json.loads(open("/proc/kguard").read())
+    sink.close()
+    udp = [e for e in proc["events"] if e["dst_port"] == port]
+    check("/proc/kguard shows the v2 header fields",
+          udp and udp[0]["ttl"] == 64 and udp[0]["ip_len"] == 29 and udp[0]["tcp_options"] == "",
+          udp[0] if udp else "no event")
+
+
 def tcp_checksum(src, dst, segment):
     pseudo = socket.inet_aton(src) + socket.inet_aton(dst) + struct.pack("!BBH", 0, 6, len(segment))
     data = pseudo + segment + (b"\0" if len(segment) % 2 else b"")
@@ -403,7 +436,7 @@ def main():
     if not os.path.exists(f"{TRACEFS}/events"):
         sh(f"mount -t tracefs nodev {TRACEFS}", check_rc=False)
     tests = [test_load, test_mmap_python_reader, test_exclusive_reader, test_c_reader_throughput,
-             test_no_busy_polling, test_process_attribution,
+             test_no_busy_polling, test_process_attribution, test_packet_headers,
              test_invalid_packets, test_ipv6, test_network_namespaces, test_netlink_control, test_tracepoints,
              test_ring_full, test_reader_group, test_clean_unload]
     guard_only = "--guard" in sys.argv

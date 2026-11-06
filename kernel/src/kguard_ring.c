@@ -56,7 +56,7 @@ int kguard_ring_init(unsigned int slots)
 	struct kguard_mmap_info *info;
 	unsigned int n;
 
-	BUILD_BUG_ON(sizeof(struct kguard_event) != 96);
+	BUILD_BUG_ON(sizeof(struct kguard_event) != 128);
 	BUILD_BUG_ON(sizeof(struct kguard_ring_header) > PAGE_SIZE);
 	BUILD_BUG_ON(offsetof(struct kguard_ring_header, tail) != 64);
 	BUILD_BUG_ON(offsetof(struct kguard_ring_header, dropped) != 128);

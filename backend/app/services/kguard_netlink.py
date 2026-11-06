@@ -44,8 +44,11 @@ KGUARD_ATTR_ALERT_TYPE = 36
 KGUARD_ATTR_ALERT_ACTION = 37
 KGUARD_ATTR_ALERT_PORTS = 38
 KGUARD_ATTR_ALERT_ATTEMPTS = 39
+KGUARD_ATTR_SPOOF_REASON = 41
+KGUARD_ATTR_IFINDEX = 42
 
-ALERT_TYPES = {1: "scan", 2: "syn_rate"}
+ALERT_TYPES = {1: "scan", 2: "syn_rate", 3: "spoof"}
+SPOOF_REASONS = {1: "loopback", 2: "local", 3: "martian"}
 ALERT_ACTIONS = {0: "none", 1: "dropped", 2: "blocked"}
 
 
@@ -94,6 +97,9 @@ def decode_alert(payload: bytes) -> Dict[str, Any]:
         "ports": struct.unpack("I", a[KGUARD_ATTR_ALERT_PORTS][:4])[0],
         "attempts": struct.unpack("I", a[KGUARD_ATTR_ALERT_ATTEMPTS][:4])[0],
         "timestamp": struct.unpack("Q", a[KGUARD_ATTR_TIMESTAMP][:8])[0],
+        **({"spoof_reason": SPOOF_REASONS.get(a[KGUARD_ATTR_SPOOF_REASON][0], "unknown"),
+            "ifindex": struct.unpack("I", a[KGUARD_ATTR_IFINDEX][:4])[0]}
+           if KGUARD_ATTR_SPOOF_REASON in a else {}),
     }
 
 
@@ -110,6 +116,10 @@ def encode_alert(alert: Dict[str, Any]) -> bytes:
         + attr(KGUARD_ATTR_ALERT_PORTS, struct.pack("I", alert.get("ports", 0)))
         + attr(KGUARD_ATTR_ALERT_ATTEMPTS, struct.pack("I", alert.get("attempts", 0)))
     )
+    if "spoof_reason" in alert:
+        reasons = {v: k for k, v in SPOOF_REASONS.items()}
+        payload += (attr(KGUARD_ATTR_SPOOF_REASON, struct.pack("B", reasons[alert["spoof_reason"]]))
+                    + attr(KGUARD_ATTR_IFINDEX, struct.pack("I", alert.get("ifindex", 0))))
     body = struct.pack("BBH", KGUARD_CMD_ALERT, 1, 0) + payload
     return struct.pack("IHHII", 16 + len(body), 0x20, 0, 0, 0) + body
 

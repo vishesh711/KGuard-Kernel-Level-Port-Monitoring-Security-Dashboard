@@ -67,8 +67,42 @@ class Settings(BaseSettings):
     # A source becomes a port scanner after trying this many distinct ports
     # within the detection window
     port_scan_threshold: int = 10
-    # Connection attempts to these ports raise SUSPICIOUS_PORT alerts
-    suspicious_ports: List[int] = [22, 23, 80, 443, 3389, 5432, 3306]
+    # Connection attempts to these ports raise SUSPICIOUS_PORT alerts. Web
+    # ports (80, 443) are left out: every visitor to a web server would alert.
+    suspicious_ports: List[int] = [22, 23, 3389, 5432, 3306]
+    # Sources (addresses or CIDR prefixes) never alerted on, e.g. monitoring
+    # and management hosts
+    trusted_sources: List[str] = []
+    # Repeated new connections to login/database ports raise BRUTE_FORCE
+    brute_force_ports: List[int] = [21, 22, 23, 25, 110, 143, 445, 1433, 3306, 3389, 5432, 5900, 6379, 27017]
+    brute_force_threshold: int = 10
+    # Half-open connections to one destination that make a SYN flood
+    syn_flood_threshold: int = 200
+    syn_flood_window_seconds: int = 10
+    # Spoofing (SPOOFED_TRAFFIC): packets from one source whose hop count
+    # (from the TTL) jumps by at least ttl_jump_hops, at least ttl_jump_packets times
+    ttl_jump_hops: int = 5
+    ttl_jump_packets: int = 3
+    # Report sources in bogon ranges (documentation, benchmarking, reserved, ...);
+    # turn off for labs that use those ranges internally
+    bogon_detection: bool = True
+    # Amplification (AMPLIFICATION): UDP replies from reflector ports
+    # (DNS, NTP, memcached, SSDP, ...) of at least amplification_min_bytes
+    amplification_min_bytes: int = 400
+    # Unsolicited replies to one destination within the window
+    amplification_threshold: int = 50
+    amplification_window_seconds: int = 10
+    # This host as a reflector: reply bytes to one client at least this many
+    # times the request bytes, and at least reflector_min_bytes in the window
+    reflector_ratio: float = 10.0
+    reflector_min_bytes: int = 100_000
+    # Traffic baseline (UNUSUAL_TRAFFIC): per host and port, per interval
+    baseline_interval_seconds: int = 60
+    baseline_alpha: float = 0.1
+    baseline_warmup: int = 10
+    baseline_sigma: float = 6.0
+    baseline_ratio: float = 5.0
+    baseline_min_count: int = 100
     # A source trying more connections than this per minute raises HIGH_FREQUENCY
     high_frequency_threshold: int = 100
     # How far back (seconds) detection looks at each source's activity

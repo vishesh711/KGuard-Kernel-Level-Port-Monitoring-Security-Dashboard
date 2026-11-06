@@ -19,6 +19,7 @@ from .api import agents_router, alerts_router, events_router, health_router
 from .config import settings
 from .database import check_db_connection, init_db
 from .services.anomaly_detector import anomaly_detector
+from .services.baseline import traffic_baseline
 from .services.data_collector import data_collector
 from .services.kernel_alerts import kernel_alerts
 from .services.websocket_manager import connection_manager
@@ -32,22 +33,30 @@ logger = logging.getLogger(__name__)
 
 
 async def periodic_tasks():
-    """Housekeeping and stats broadcast every 30 seconds"""
+    """Housekeeping, stats broadcast every 30 seconds, and the traffic baseline"""
     from .services.websocket_manager import broadcast_stats_update
 
+    loop = asyncio.get_running_loop()
+    next_stats = next_baseline = loop.time()
     while True:
         try:
-            anomaly_detector.cleanup_old_cooldowns()
+            now = loop.time()
+            if now >= next_baseline:
+                next_baseline = now + settings.baseline_interval_seconds
+                await traffic_baseline.tick()
 
-            if connection_manager.active_connections:
-                await broadcast_stats_update({
-                    "data_collector": data_collector.get_stats(),
-                    "anomaly_detector": anomaly_detector.get_stats(),
-                    "kernel_alerts": kernel_alerts.get_stats(),
-                    "websocket": connection_manager.get_stats(),
-                })
+            if now >= next_stats:
+                next_stats = now + 30
+                anomaly_detector.cleanup_old_cooldowns()
+                if connection_manager.active_connections:
+                    await broadcast_stats_update({
+                        "data_collector": data_collector.get_stats(),
+                        "anomaly_detector": anomaly_detector.get_stats(),
+                        "kernel_alerts": kernel_alerts.get_stats(),
+                        "websocket": connection_manager.get_stats(),
+                    })
 
-            await asyncio.sleep(30)
+            await asyncio.sleep(max(0.5, min(next_stats, next_baseline) - loop.time()))
         except asyncio.CancelledError:
             raise
         except Exception as e:

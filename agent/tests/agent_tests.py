@@ -166,6 +166,11 @@ def test_ebpf_attribution():
     late_in = [e for e in ev if e["dst_port"] == 4447 and e["flags"] == 2 and e["direction"] == "in"]
     check("eBPF: listener started after the agent is named (fexit inet_listen)",
           late_in and late_in[0]["comm"] == "nc" and late_in[0]["pid"] == late.pid, late_in[:1])
+    s = syn_out[0] if syn_out else {}
+    check("eBPF: SYN carries TTL, length and Linux's TCP option order (XDP/TC option parser)",
+          (s.get("ttl"), s.get("ip_len"), s.get("tcp_options"), s.get("tcp_mss")) == (64, 60, "M,S,T,N,W", 65495)
+          and s.get("tcp_wscale", -1) >= 0 and s.get("df") is True,
+          {k: s.get(k) for k in ("ttl", "ip_len", "df", "tcp_window", "tcp_mss", "tcp_wscale", "tcp_options")})
     udp_out = [e for e in ev if e["dst_port"] == port and e["direction"] == "out"]
     check("eBPF: first UDP datagram already attributed (fentry udp_sendmsg)",
           len(udp_out) == 3 and all(e["comm"] == "python3" for e in udp_out),
@@ -277,6 +282,8 @@ def test_module_engine():
     check("module engine: listener named from its socket inode (agent's /proc scan)",
           syn_in and syn_in[0]["comm"] == "nc", syn_in[:1])
     check("module engine: conntrack state included", syn_in and syn_in[0]["ct_state"] == "new")
+    check("module engine: SYN option order forwarded", syn_in and syn_in[0]["tcp_options"] == "M,S,T,N,W",
+          syn_in[0].get("tcp_options") if syn_in else None)
     sink.close()
 
 

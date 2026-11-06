@@ -11,20 +11,22 @@ and SYN floods per source, and can drop traffic from blocked or flooding
 sources before connection tracking ever sees it. It ships in monitor-only
 mode and never drops anything until you turn enforcement on.
 
-Tested on Linux 6.8 (Ubuntu 24.04 kernel), in a VM, with real traffic.
+Tested on Linux 6.8 (Ubuntu 24.04 kernel), in a VM, with real traffic; also builds
+without warnings against Linux 7.0 (what GitHub CI runs).
 
 ## How it works
 
 ```
- packet ─► guard hook (PRE_ROUTING, first): allowlist ─► blocklist ─►
-           per-source scan + SYN-rate tracking ─► alerts (Netlink multicast),
-           drops only when enforcing
+ packet ─► guard hook (PRE_ROUTING, first): spoofed source? ─► allowlist ─►
+           blocklist ─► per-source scan + SYN-rate tracking ─► alerts
+           (Netlink multicast), drops only when enforcing
       │
       ▼
            Netfilter hooks (LOCAL_IN / LOCAL_OUT / FORWARD, IPv4 + IPv6,
            every network namespace, just after conntrack)
-              │  parse headers safely, add conntrack state, find the
-              │  socket owner (UID, socket inode, sending process)
+              │  parse headers safely (TTL, length, TCP window, and the
+              │  SYN's option order for OS fingerprinting), add conntrack
+              │  state, find the socket owner (UID, inode, sending process)
               ▼
            per-CPU ring buffers (one writer per ring, no shared lock)
               │
@@ -159,7 +161,7 @@ sudo cat /proc/kguard
 
 ```json
 {"dropped": 0, "events": [
-{"timestamp": 1762380000123456789, "family": 4, "src_ip": "127.0.0.1", "dst_ip": "127.0.0.1", "src_port": 50916, "dst_port": 4444, "protocol": "TCP", "flags": 2, "direction": "out", "ct_state": "new", "netns": 4026531840, "ifindex": 1, "pid": 120, "comm": "curl", "uid": 1000, "sock_ino": 1177}
+{"timestamp": 1762380000123456789, "family": 4, "src_ip": "127.0.0.1", "dst_ip": "127.0.0.1", "src_port": 50916, "dst_port": 4444, "protocol": "TCP", "flags": 2, "direction": "out", "ct_state": "new", "netns": 4026531840, "ifindex": 1, "ttl": 64, "ip_len": 60, "df": true, "tcp_window": 65495, "tcp_mss": 65495, "tcp_wscale": 7, "tcp_options": "M,S,T,N,W", "pid": 120, "comm": "curl", "uid": 1000, "sock_ino": 1177}
 ]}
 ```
 
@@ -174,6 +176,13 @@ sudo cat /proc/kguard
 | `netns` | Network namespace inode number |
 | `pid`, `comm` | Sending process, when sent from its own context; otherwise -1 and "" |
 | `uid`, `sock_ino` | Owner and inode of the local socket; otherwise -1 and 0 |
+| `ttl`, `ip_len`, `df` | IPv4 TTL (IPv6 hop limit), packet length, don't-fragment bit |
+| `tcp_window` | TCP window as sent (unscaled) |
+| `tcp_mss`, `tcp_wscale`, `tcp_options` | SYN only: MSS and window-scale options, and the option order in p0f letters (M MSS, N NOP, W window scale, S SACK permitted, T timestamps, E end); 0, -1 and "" otherwise |
+
+The binary record (`struct kguard_event`, ABI version 2) is 128 bytes, two
+cache lines. Readers check the version in the mmap header and refuse a
+module built for another one.
 
 Ports are 0 for protocols without ports and for non-first IP fragments.
 
@@ -211,8 +220,18 @@ What happens to a packet from a source that is not allowlisted:
 | `scan_threshold` distinct ports in the window | `scan` alert | `scan` alert; blocked if `auto_block=1` |
 | SYNs beyond `syn_rate`/`syn_burst` | `syn_rate` alert, counted as `would_drop` | excess SYNs dropped (`rate_drops`), alert |
 
-Alerts are sent at most once per source and kind every 10 seconds, and at
-most 100 per second overall. They go to the Netlink `events` group (the
+Before any of that, and before the allowlist (so a forged allowlisted
+address cannot slip through), packets arriving on a real interface with a
+source that cannot be genuine raise a `spoof` alert, counted as `spoofed`,
+and are dropped when enforcing: loopback addresses, this host's own
+addresses (checked for connection attempts, as it needs a routing lookup),
+and multicast, broadcast or 0.0.0.0/8 sources (except a DHCP client's
+0.0.0.0). The routing code would drop most of them later anyway, silently.
+
+Alerts are sent at most once per source and kind every 10 seconds (spoof
+alerts: once per reason every 10 seconds, with the number of packets they
+stand for, since spoofed sources are usually random), and at most 100 per
+second overall. They go to the Netlink `events` group (the
 backend stores them as dashboard alerts) and to the `kguard:kguard_alert`
 tracepoint. Trying to block a local or allowlisted address is refused.
 
@@ -234,17 +253,21 @@ echo 1 | sudo tee /sys/kernel/tracing/events/kguard/enable
 ## Testing
 
 `tests/vm_tests.py` loads the module and checks every feature with real
-traffic (61 checks): lossless zero-copy reads at 5,000 packets/s, idle CPU
+traffic (73 checks): lossless zero-copy reads at 5,000 packets/s, idle CPU
 use, exclusive access, process attribution (curl, an `nc` listener),
-conntrack states including invalid packets, IPv6, network namespaces, live
+conntrack states including invalid packets, the SYN header fields (TTL,
+Linux's option order, MSS, window scale), IPv6, network namespaces, live
 reconfiguration over Netlink, tracepoints, ring overflow and permissions.
 
 `tests/guard_tests.py` (run by `vm_tests.py`) builds an attacker network
 namespace joined by a veth pair and checks: an nmap SYN scan is reported
 within a second, monitor-only mode drops nothing, blocks are enforced and
 expire, IPv6 blocks, the allowlist always wins, local addresses cannot be
-blocked, a SYN flood is cut to the configured rate, auto-blocking, and that
-20,000 spoofed sources keep the state table at its cap with no leaks.
+blocked, a SYN flood is cut to the configured rate, auto-blocking, that
+scapy-forged loopback, own-address and multicast sources raise `spoof`
+alerts (one per reason under a random-source flood, counting every packet),
+and that 20,000 spoofed sources keep the state table at its cap with no
+leaks.
 
 Run it in a throwaway VM so a kernel bug cannot take down your machine:
 

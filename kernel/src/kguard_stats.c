@@ -40,6 +40,7 @@ void kguard_stats_read(struct kguard_stats_total *total)
 		total->block_drops += READ_ONCE(s->block_drops);
 		total->rate_drops += READ_ONCE(s->rate_drops);
 		total->would_drop += READ_ONCE(s->would_drop);
+		total->spoofed += READ_ONCE(s->spoofed);
 	}
 	total->ns_per_packet = ns_samples ? div64_u64(ns_total, ns_samples) : 0;
 	total->ring_fill = kguard_ring_fill();
@@ -68,6 +69,7 @@ static int kguard_stats_show(struct seq_file *m, void *v)
 	seq_printf(m, "block_drops    %llu\n", t.block_drops);
 	seq_printf(m, "rate_drops     %llu\n", t.rate_drops);
 	seq_printf(m, "would_drop     %llu\n", t.would_drop);
+	seq_printf(m, "spoofed        %llu\n", t.spoofed);
 	seq_printf(m, "blocks         %llu\n", t.blocks);
 	return 0;
 }

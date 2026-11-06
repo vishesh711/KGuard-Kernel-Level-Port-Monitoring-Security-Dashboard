@@ -632,7 +632,7 @@ static void kguard_gc(struct work_struct *work)
 	rhashtable_walk_stop(&iter);
 	rhashtable_walk_exit(&iter);
 
-	schedule_delayed_work(&kguard_gc_work, KGUARD_GC_PERIOD);
+	queue_delayed_work(system_unbound_wq, &kguard_gc_work, KGUARD_GC_PERIOD);
 }
 
 /* ---- init / cleanup ---- */
@@ -663,7 +663,11 @@ int kguard_track_init(unsigned int max_sources, unsigned int idle_timeout,
 		goto err_block;
 
 	INIT_DELAYED_WORK(&kguard_gc_work, kguard_gc);
-	schedule_delayed_work(&kguard_gc_work, KGUARD_GC_PERIOD);
+	/*
+	 * Unbound: after a random-source flood the walk covers up to
+	 * max_sources entries, too long to hold up a per-CPU worker
+	 */
+	queue_delayed_work(system_unbound_wq, &kguard_gc_work, KGUARD_GC_PERIOD);
 	return 0;
 
 err_block:

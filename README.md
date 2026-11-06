@@ -20,6 +20,9 @@ KGuard is a comprehensive, production-ready kernel-level network security monito
 - **Port Scan Detection**: Identifies multiple port access attempts from single sources
 - **Suspicious Port Monitoring**: Flags access to commonly attacked ports (SSH, RDP, databases)
 - **High-Frequency Attack Detection**: Detects rapid connection attempts indicating automated attacks
+- **Scan Classification**: Names nmap scan types (SYN, UDP, FIN, NULL, Xmas, ACK, Maimon) and, from TCP fingerprints, the scanning tool
+- **Passive OS Fingerprinting**: Recognises Linux, Windows and macOS senders from TTL, window, MSS and TCP option order
+- **Spoofing, SYN Flood and Amplification Detection**: TTL jumps, bogon/martian sources (also in the kernel), half-open floods, DNS/NTP/memcached reflection
 - **Real-time Alerting**: Immediate notifications for critical security events
 - **Alert Management**: Acknowledgment and resolution workflows for security incidents
 

@@ -53,6 +53,7 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _add_missing_columns()
+    _add_missing_enum_values()
     logger.info("Database tables created successfully")
 
 
@@ -82,6 +83,26 @@ def _add_missing_columns() -> None:
                     f"ALTER TABLE {quote(table.name)} ADD COLUMN {quote(column.name)} {column_type}"
                 ))
                 logger.info(f"Added column {table.name}.{column.name}")
+
+
+def _add_missing_enum_values() -> None:
+    """
+    PostgreSQL stores Enum columns as native types, which reject values added
+    in newer versions (such as new alert types) until the type is altered.
+    """
+    if engine.dialect.name != "postgresql":
+        return
+    from sqlalchemy import Enum
+
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        for table in Base.metadata.sorted_tables:
+            for column in table.columns:
+                if not isinstance(column.type, Enum) or not column.type.native_enum:
+                    continue
+                for value in column.type.enums:
+                    conn.execute(text(
+                        f"ALTER TYPE {column.type.name} ADD VALUE IF NOT EXISTS '{value}'"
+                    ))
 
 
 def check_db_connection() -> bool:

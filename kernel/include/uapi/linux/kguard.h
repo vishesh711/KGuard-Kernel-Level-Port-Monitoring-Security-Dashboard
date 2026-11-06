@@ -46,7 +46,13 @@
 
 #include <linux/types.h>
 
-#define KGUARD_ABI_VERSION	1
+/*
+ * 1: 96-byte events
+ * 2: 128-byte events adding TTL, IP length, TCP window, MSS, window scale
+ *    and TCP option order (for OS fingerprinting, spoofing and
+ *    amplification detection)
+ */
+#define KGUARD_ABI_VERSION	2
 #define KGUARD_MMAP_MAGIC	0x4452474bU	/* "KGRD" little-endian */
 
 /* Direction of the packet relative to this host */
@@ -81,9 +87,25 @@ enum kguard_ct_state {
 #define KGUARD_TCP_ACK		0x10
 #define KGUARD_TCP_URG		0x20
 
+/* struct kguard_event.ip_flags bits */
+#define KGUARD_IPF_DF		0x01	/* IPv4 Don't Fragment set */
+
+/* TCP option kinds recorded in tcp_opts[] (as on the wire) */
+#define KGUARD_TCPOPT_EOL	0
+#define KGUARD_TCPOPT_NOP	1
+#define KGUARD_TCPOPT_MSS	2
+#define KGUARD_TCPOPT_WS	3
+#define KGUARD_TCPOPT_SACKOK	4
+#define KGUARD_TCPOPT_TS	8
+
+#define KGUARD_TCP_MAX_OPTS	8
+
 /*
- * One captured packet. 96 bytes, no implicit padding.
- * Python: struct.Struct("<QQ16s16sHHBBBBBB2xIIII16s4x")
+ * One captured packet. 128 bytes (two cache lines), no implicit padding.
+ * Python: struct.Struct("<QQ16s16sHHBBBBBB2xIIII16sHHHBB8sBB2x16x")
+ *
+ * TCP options (mss, wscale, tcp_opts) are parsed for SYN packets only,
+ * which is where they identify the sender; elsewhere they are zero.
  */
 struct kguard_event {
 	__u64	timestamp_ns;	/* CLOCK_REALTIME */
@@ -104,7 +126,16 @@ struct kguard_event {
 	__u32	uid;		/* socket owner (KGUARD_EVF_SOCK) */
 	__u32	ifindex;	/* input or output interface */
 	char	comm[16];	/* sending process name (KGUARD_EVF_PROC) */
-	__u32	__pad1;
+	__u16	ip_len;		/* IP total length (IPv6: payload + 40) */
+	__u16	tcp_window;	/* TCP window field as sent (unscaled) */
+	__u16	tcp_mss;	/* SYN: MSS option value, 0 if absent */
+	__u8	ttl;		/* IPv4 TTL or IPv6 hop limit */
+	__u8	tcp_wscale;	/* SYN: window scale shift, 0xff if absent */
+	__u8	tcp_opts[KGUARD_TCP_MAX_OPTS];	/* SYN: option kinds in order */
+	__u8	tcp_opts_len;	/* entries used in tcp_opts */
+	__u8	ip_flags;	/* KGUARD_IPF_* */
+	__u16	__pad1;
+	__u64	__pad2[2];
 };
 
 /* Page 0 of the mmap area */
@@ -202,6 +233,9 @@ enum kguard_genl_attr {
 	KGUARD_ATTR_ALERT_PORTS,	/* u32: distinct ports in the window */
 	KGUARD_ATTR_ALERT_ATTEMPTS,	/* u32: connection attempts in the window */
 	KGUARD_ATTR_ALLOW_ENTRY,	/* nest: ADDR, PREFIX_LEN */
+	KGUARD_ATTR_SPOOF_REASON,	/* u8: enum kguard_spoof_reason (SPOOF alerts) */
+	KGUARD_ATTR_IFINDEX,		/* u32: interface the packet arrived on */
+	KGUARD_ATTR_STAT_SPOOFED,	/* u64: packets with impossible sources */
 	__KGUARD_ATTR_MAX,
 };
 
@@ -210,12 +244,20 @@ enum kguard_genl_attr {
 enum kguard_alert_type {
 	KGUARD_ALERT_SCAN	= 1,	/* many distinct ports from one source */
 	KGUARD_ALERT_SYN_RATE	= 2,	/* new connections over the rate limit */
+	KGUARD_ALERT_SPOOF	= 3,	/* impossible source address (martian) */
 };
 
 enum kguard_alert_action {
 	KGUARD_ACTION_NONE	= 0,	/* monitor only, or source is protected */
 	KGUARD_ACTION_DROPPED	= 1,	/* excess packets dropped */
 	KGUARD_ACTION_BLOCKED	= 2,	/* source added to the blocklist */
+};
+
+/* Why a source address is impossible on the interface it arrived on */
+enum kguard_spoof_reason {
+	KGUARD_SPOOF_LOOPBACK	= 1,	/* 127.0.0.0/8 or ::1 from a real interface */
+	KGUARD_SPOOF_LOCAL	= 2,	/* one of this host's own addresses */
+	KGUARD_SPOOF_MARTIAN	= 3,	/* multicast, broadcast, 0.0.0.0/8 or :: */
 };
 
 enum kguard_block_reason {

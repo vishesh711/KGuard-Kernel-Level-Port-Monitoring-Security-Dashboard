@@ -3,66 +3,95 @@ Anomaly Detection Service
 
 Looks at network events as they are collected and raises security alerts.
 
-Detection works on connection attempts only (TCP SYN without ACK, and UDP
-packets), not on every packet, so that ordinary traffic such as a large
-download does not look like an attack. Each source IP has a sliding window
-of its recent attempts, so activity spread across several collection cycles
-is still seen as one pattern.
+Each incoming packet is classified as a scan probe or not (probes.py): SYN,
+UDP, and the stealth probes FIN, NULL, Xmas, ACK and Maimon. Each source has
+a sliding window of its recent probes, so activity spread across several
+collection cycles is still seen as one pattern. Outgoing copies of packets
+are ignored so local traffic is not counted twice.
 
-Rules:
-- PORT_SCAN: a source tries at least `port_scan_threshold` distinct ports
-  within the window.
-- HIGH_FREQUENCY: a source makes more than `high_frequency_threshold`
-  attempts per minute (measured over the window).
-- SUSPICIOUS_PORT: a source tries a port in `suspicious_ports`. Skipped for
-  sources already reported as port scanners, which would otherwise raise one
-  alert per port.
+Rules (all per host and source, with a cooldown so one attacker does not
+flood the alert list):
+- PORT_SCAN: at least `port_scan_threshold` distinct ports probed with one
+  probe type within the window. The alert names the scan type. When this
+  server's kernel module reports scans itself, SYN and UDP scans are left
+  to it; stealth scans are always detected here (the kernel counts only
+  SYN and UDP).
+- HIGH_FREQUENCY: more than `high_frequency_threshold` connection attempts
+  per minute (left to the kernel for this server when it detects).
+- BRUTE_FORCE: at least `brute_force_threshold` new connections to one
+  login/database port (`brute_force_ports`) within the window.
+- SUSPICIOUS_PORT: a connection attempt to a port in `suspicious_ports`
+  (skipped for sources already reported as scanners).
+- SYN_FLOOD: at least `syn_flood_threshold` half-open connections (SYN seen,
+  handshake never completed) to one destination within
+  `syn_flood_window_seconds`, whatever their sources, so floods from random
+  spoofed addresses are caught.
+- SPOOFED_TRAFFIC: TTL jumps for one source, and bogon sources (spoofing.py).
+- AMPLIFICATION: unsolicited large replies from reflector services, or this
+  host acting as a reflector (amplification.py).
 
-Every rule has a cooldown per source so a single attacker does not flood the
-alert list.
+SYN packets carry a TCP fingerprint (fingerprint.py); scan, brute-force and
+flood alerts name the operating system or tool that sent them.
+
+Sources in `trusted_sources` are never alerted on.
 """
 
+import ipaddress
 import logging
-from collections import Counter, defaultdict, deque
+from collections import Counter, OrderedDict, defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Deque, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from ..config import settings
 from ..database import SessionLocal
 from ..models.network_event import NetworkEvent
 from ..models.security_alert import AlertSeverity, AlertType, SecurityAlert
+from .amplification import AmplificationDetector
+from .probes import ACK, CONNECTION_PROBES, LABELS, SYN, classify_probe
+from .spoofing import SpoofingDetector
 
 logger = logging.getLogger(__name__)
 
-TCP_SYN = 0x02
-TCP_ACK = 0x10
+TCP_SYN = SYN
+TCP_ACK = ACK
 
 # Most event IDs stored on one alert
 MAX_RELATED_EVENT_IDS = 100
+# Most half-open connections remembered per destination
+MAX_PENDING_PER_DESTINATION = 200_000
 
 
 @dataclass(frozen=True)
-class Attempt:
-    """One connection attempt remembered in a source's window"""
+class Probe:
+    """One probe remembered in a source's window"""
     time: float  # seconds since the Unix epoch
+    kind: str  # see probes.py
     dst_ip: str
     dst_port: int
     event_id: Optional[int]
+    os_guess: Optional[str] = None  # SYN fingerprint (fingerprint.py)
+
+
+# Kept for callers that still say "Attempt"
+Attempt = Probe
+
+
+def is_incoming(event: NetworkEvent) -> bool:
+    return getattr(event, "direction", None) != "out"
+
+
+def probe_kind(event: NetworkEvent) -> Optional[str]:
+    """Probe type of an incoming event, None for ordinary traffic"""
+    if not is_incoming(event):
+        return None
+    return classify_probe(event.protocol, event.flags, getattr(event, "ct_state", None), event.dst_port)
 
 
 def is_connection_attempt(event: NetworkEvent) -> bool:
-    """
-    True for a TCP SYN without ACK, or any UDP packet, arriving at or routed
-    through this host. Outgoing copies are skipped so that local traffic
-    (seen once leaving and once arriving) is not counted twice.
-    """
-    if getattr(event, "direction", None) == "out":
-        return False
-    if event.protocol == "TCP":
-        flags = event.flags or 0
-        return bool(flags & TCP_SYN) and not (flags & TCP_ACK)
-    return event.protocol == "UDP"
+    """True for an incoming TCP SYN without ACK, or any incoming UDP packet"""
+    return probe_kind(event) in CONNECTION_PROBES
 
 
 def source_key(src_ip: str, host_id: Optional[int]) -> str:
@@ -79,6 +108,74 @@ def event_time(event: NetworkEvent) -> float:
     return datetime.utcnow().timestamp()
 
 
+def syn_cookies_enabled() -> Optional[int]:
+    """This server's net.ipv4.tcp_syncookies (0 off, 1 when needed, 2 always)"""
+    try:
+        return int(Path("/proc/sys/net/ipv4/tcp_syncookies").read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def sender_fingerprint(guesses) -> Dict[str, Any]:
+    """Alert metadata naming the OS or tool behind a set of SYN fingerprints"""
+    counts = Counter(g for g in guesses if g)
+    if not counts:
+        return {}
+    name, _count = counts.most_common(1)[0]
+    return {"sender_fingerprint": name, "fingerprints": dict(counts.most_common(5))}
+
+
+def fingerprint_text(meta: Dict[str, Any]) -> str:
+    name = meta.get("sender_fingerprint")
+    if not name or name == "unknown":
+        return ""
+    if name == "crafted":
+        return " The SYN packets were hand-crafted (no TCP options), as raw-packet tools do."
+    if name in ("nmap", "masscan", "zmap"):
+        return f" The SYN packets have {name}'s TCP fingerprint."
+    return f" The SYN packets have a {name} TCP fingerprint."
+
+
+class FloodTracker:
+    """Half-open TCP connections per destination (host, address, port)"""
+
+    def __init__(self, window_seconds: float):
+        self.window_seconds = window_seconds
+        # destination -> {(src_ip, src_port): (time of SYN, its fingerprint)}, oldest first
+        self.pending: Dict[tuple, "OrderedDict[tuple, tuple]"] = {}
+
+    def syn(self, dest: tuple, src: tuple, t: float, guess: Optional[str] = None) -> None:
+        pending = self.pending.setdefault(dest, OrderedDict())
+        pending[src] = (t, guess)
+        pending.move_to_end(src)
+        if len(pending) > MAX_PENDING_PER_DESTINATION:
+            pending.popitem(last=False)
+
+    def completed(self, dest: tuple, src: tuple) -> None:
+        pending = self.pending.get(dest)
+        if pending:
+            pending.pop(src, None)
+
+    def half_open(self, dest: tuple, now: float) -> Tuple[int, int]:
+        """(half-open connections in the window, distinct sources among them)"""
+        pending = self.pending.get(dest)
+        if not pending:
+            return 0, 0
+        cutoff = now - self.window_seconds
+        while pending and next(iter(pending.values()))[0] < cutoff:
+            pending.popitem(last=False)
+        return len(pending), len({src for src, _port in pending})
+
+    def fingerprints(self, dest: tuple) -> List[Optional[str]]:
+        return [guess for _t, guess in self.pending.get(dest, {}).values()]
+
+    def forget_idle(self, now: float) -> None:
+        idle = [d for d, p in self.pending.items()
+                if not p or next(reversed(p.values()))[0] < now - self.window_seconds]
+        for dest in idle:
+            del self.pending[dest]
+
+
 class AnomalyDetectorService:
     """Detects suspicious network behaviour and stores security alerts"""
 
@@ -86,17 +183,24 @@ class AnomalyDetectorService:
         self.port_scan_threshold = settings.port_scan_threshold
         self.suspicious_ports = set(settings.suspicious_ports)
         self.high_frequency_threshold = settings.high_frequency_threshold
+        self.brute_force_ports = set(settings.brute_force_ports)
+        self.brute_force_threshold = settings.brute_force_threshold
+        self.syn_flood_threshold = settings.syn_flood_threshold
         self.window_seconds = float(settings.detection_window_seconds)
         self.max_attempts_per_source = settings.max_attempts_per_source
         self.alert_cooldown = timedelta(seconds=settings.alert_cooldown_seconds)
+        self.trusted_networks = [ipaddress.ip_network(n, strict=False) for n in settings.trusted_sources]
         # Kept for analyze_historical_patterns callers
         self.detection_window = timedelta(seconds=settings.detection_window_seconds)
 
-        # Recent connection attempts per source IP
-        self.windows: Dict[str, Deque[Attempt]] = {}
+        # Recent probes per (host, source)
+        self.windows: Dict[str, Deque[Probe]] = {}
+        self.floods = FloodTracker(float(settings.syn_flood_window_seconds))
+        self.spoofing = SpoofingDetector(self)
+        self.amplification = AmplificationDetector(self)
 
-        # True while the kernel module reports scans and SYN floods itself
-        # (see kernel_alerts.py); the matching rules here are then skipped
+        # True while this server's kernel module reports SYN/UDP scans and
+        # SYN-rate abuse itself (see kernel_alerts.py)
         self.kernel_detection = False
 
         # Last alert time per rule and source, to rate-limit alerts
@@ -105,10 +209,15 @@ class AnomalyDetectorService:
         self.stats = {
             "events_analyzed": 0,
             "connection_attempts": 0,
+            "probes": 0,
             "alerts_generated": 0,
             "port_scans_detected": 0,
             "suspicious_ports_detected": 0,
             "high_frequency_detected": 0,
+            "brute_force_detected": 0,
+            "syn_floods_detected": 0,
+            "spoofing_detected": 0,
+            "amplification_detected": 0,
             "last_analysis": None,
         }
 
@@ -116,6 +225,20 @@ class AnomalyDetectorService:
         """Forget all remembered activity and cooldowns"""
         self.windows.clear()
         self.recent_alerts.clear()
+        self.floods.pending.clear()
+        self.spoofing.reset()
+        self.amplification.reset()
+
+    event_time = staticmethod(event_time)
+
+    def is_trusted(self, ip: str) -> bool:
+        if not self.trusted_networks:
+            return False
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return False
+        return any(addr in net for net in self.trusted_networks)
 
     async def analyze_events(self, events: List[NetworkEvent]) -> List[SecurityAlert]:
         """
@@ -127,45 +250,72 @@ class AnomalyDetectorService:
 
         self.stats["events_analyzed"] += len(events)
 
-        # Connection attempts in this batch, grouped by (host, source)
-        batch: Dict[str, List[Attempt]] = defaultdict(list)
+        batch: Dict[str, List[Probe]] = defaultdict(list)
         sources: Dict[str, tuple] = {}
+        flood_dests: Dict[tuple, Optional[int]] = {}
+        latest = 0.0
+
         for event in events:
-            if not is_connection_attempt(event):
+            if not is_incoming(event) or self.is_trusted(event.src_ip):
                 continue
             host_id = getattr(event, "host_id", None)
+            t = event_time(event)
+            latest = max(latest, t)
+
+            # Half-open tracking for SYN floods
+            if event.protocol == "TCP":
+                dest = (host_id, event.dst_ip, event.dst_port)
+                src = (event.src_ip, event.src_port)
+                flags = event.flags or 0
+                if flags & SYN and not flags & ACK:
+                    self.floods.syn(dest, src, t, getattr(event, "os_guess", None))
+                    flood_dests[dest] = host_id
+                elif flags & ACK:
+                    self.floods.completed(dest, src)
+
+            kind = probe_kind(event)
+            if not kind:
+                continue
             key = source_key(event.src_ip, host_id)
             sources[key] = (event.src_ip, host_id)
-            attempt = Attempt(
-                time=event_time(event),
-                dst_ip=event.dst_ip,
-                dst_port=event.dst_port,
-                event_id=event.id,
-            )
-            batch[key].append(attempt)
-            self._remember(key, attempt)
+            probe = Probe(time=t, kind=kind, dst_ip=event.dst_ip, dst_port=event.dst_port, event_id=event.id,
+                          os_guess=getattr(event, "os_guess", None))
+            batch[key].append(probe)
+            self._remember(key, probe)
 
-        attempt_count = sum(len(a) for a in batch.values())
-        self.stats["connection_attempts"] += attempt_count
+        self.stats["probes"] += sum(len(p) for p in batch.values())
+        self.stats["connection_attempts"] += sum(
+            1 for probes in batch.values() for p in probes if p.kind in CONNECTION_PROBES
+        )
 
         alerts: List[SecurityAlert] = []
         try:
-            for key, new_attempts in batch.items():
+            for key, new_probes in batch.items():
                 window = self.windows.get(key)
                 if not window:
                     continue
                 src_ip, host_id = sources[key]
+                kernel_covers = host_id is None and self.kernel_detection
                 found: List[SecurityAlert] = []
-                # The local kernel module reports scans and floods itself
-                if not (host_id is None and self.kernel_detection):
-                    found.extend(self._check_port_scan(key, src_ip, window))
+                found.extend(self._check_port_scans(key, src_ip, window, kernel_covers))
+                if not kernel_covers:
                     found.extend(self._check_high_frequency(key, src_ip, window))
-                found.extend(self._check_suspicious_ports(key, src_ip, new_attempts))
+                found.extend(self._check_brute_force(key, src_ip, window, new_probes))
+                found.extend(self._check_suspicious_ports(key, src_ip, new_probes))
                 for alert in found:
                     alert.host_id = host_id
                 alerts.extend(found)
+
+            for dest, host_id in flood_dests.items():
+                alert = self._check_syn_flood(dest, latest)
+                if alert:
+                    alert.host_id = host_id
+                    alerts.append(alert)
+
+            alerts.extend(self.spoofing.check(events, self.kernel_detection))
+            alerts.extend(self.amplification.check(events))
         except Exception as e:
-            logger.error(f"Error during anomaly analysis: {e}")
+            logger.error(f"Error during anomaly analysis: {e}", exc_info=True)
 
         stored = [alert for alert in alerts if self._store_alert(alert)]
 
@@ -175,53 +325,70 @@ class AnomalyDetectorService:
             logger.info(f"Analyzed {len(events)} events, generated {len(stored)} alerts")
         return stored
 
-    def _remember(self, src_ip: str, attempt: Attempt) -> None:
-        """Add an attempt to its source's window and drop expired ones"""
-        window = self.windows.get(src_ip)
+    def _remember(self, key: str, probe: Probe) -> None:
+        """Add a probe to its source's window and drop expired ones"""
+        window = self.windows.get(key)
         if window is None:
             window = deque(maxlen=self.max_attempts_per_source)
-            self.windows[src_ip] = window
-        window.append(attempt)
+            self.windows[key] = window
+        window.append(probe)
 
-        cutoff = attempt.time - self.window_seconds
+        cutoff = probe.time - self.window_seconds
         while window and window[0].time < cutoff:
             window.popleft()
 
-    def _check_port_scan(self, key: str, src_ip: str, window: Deque[Attempt]) -> List[SecurityAlert]:
-        ports = {a.dst_port for a in window}
-        if len(ports) < self.port_scan_threshold:
-            return []
+    def _check_port_scans(self, key: str, src_ip: str, window: Deque[Probe],
+                          kernel_covers: bool) -> List[SecurityAlert]:
+        ports_by_kind: Dict[str, set] = defaultdict(set)
+        for p in window:
+            ports_by_kind[p.kind].add(p.dst_port)
 
-        cooldown = f"port_scan_{key}"
-        if self._is_in_cooldown(cooldown):
-            return []
+        alerts = []
+        for kind, ports in ports_by_kind.items():
+            if len(ports) < self.port_scan_threshold:
+                continue
+            if kernel_covers and kind in CONNECTION_PROBES:
+                continue  # this server's kernel reports SYN and UDP scans
+            cooldown = f"port_scan_{key}_{kind}"
+            if self._is_in_cooldown(cooldown):
+                continue
 
-        span = window[-1].time - window[0].time
-        alert = SecurityAlert.create_port_scan_alert(
-            src_ip=src_ip,
-            event_count=len(window),
-            event_ids=self._event_ids(window),
-        )
-        alert.description = (
-            f"{src_ip} tried {len(ports)} different ports in {span:.1f} seconds "
-            f"({len(window)} connection attempts), which looks like a port scan."
-        )
-        alert.dst_ip = window[-1].dst_ip
-        alert.alert_metadata = {
-            **(alert.alert_metadata or {}),
-            "unique_ports": len(ports),
-            "sample_ports": sorted(ports)[:50],
-            "window_seconds": round(span, 3),
-            "detection_method": "sliding_window_distinct_ports",
-        }
+            probes = [p for p in window if p.kind == kind]
+            span = probes[-1].time - probes[0].time
+            label = LABELS[kind]
+            alert = SecurityAlert.create_port_scan_alert(
+                src_ip=src_ip,
+                event_count=len(probes),
+                event_ids=self._event_ids(probes),
+            )
+            alert.title = f"{label} Scan Detected from {src_ip}"
+            alert.description = (
+                f"{src_ip} sent {label} probes to {len(ports)} different ports in {span:.1f} seconds "
+                f"({len(probes)} probes), which looks like a{'n' if label[0] in 'AEFINSUX' else ''} "
+                f"{label} port scan."
+            )
+            alert.dst_ip = probes[-1].dst_ip
+            alert.alert_metadata = {
+                **(alert.alert_metadata or {}),
+                "scan_type": kind,
+                "unique_ports": len(ports),
+                "sample_ports": sorted(ports)[:50],
+                "window_seconds": round(span, 3),
+                "detection_method": "sliding_window_distinct_ports",
+                **sender_fingerprint(p.os_guess for p in probes),
+            }
+            alert.description += fingerprint_text(alert.alert_metadata)
+            self._start_cooldown(cooldown)
+            # Also silences per-port SUSPICIOUS_PORT alerts for this scanner
+            self._start_cooldown(f"port_scan_{key}")
+            self.stats["port_scans_detected"] += 1
+            logger.warning(f"{label} scan detected from {src_ip}: {len(ports)} ports in {span:.1f}s")
+            alerts.append(alert)
+        return alerts
 
-        self._start_cooldown(cooldown)
-        self.stats["port_scans_detected"] += 1
-        logger.warning(f"Port scan detected from {src_ip}: {len(ports)} ports in {span:.1f}s")
-        return [alert]
-
-    def _check_high_frequency(self, key: str, src_ip: str, window: Deque[Attempt]) -> List[SecurityAlert]:
-        per_minute = len(window) * 60.0 / self.window_seconds
+    def _check_high_frequency(self, key: str, src_ip: str, window: Deque[Probe]) -> List[SecurityAlert]:
+        attempts = [p for p in window if p.kind in CONNECTION_PROBES]
+        per_minute = len(attempts) * 60.0 / self.window_seconds
         if per_minute <= self.high_frequency_threshold:
             return []
 
@@ -229,7 +396,7 @@ class AnomalyDetectorService:
         if self._is_in_cooldown(cooldown):
             return []
 
-        span = window[-1].time - window[0].time
+        span = attempts[-1].time - attempts[0].time
         severity = (
             AlertSeverity.HIGH
             if per_minute > self.high_frequency_threshold * 10
@@ -241,15 +408,15 @@ class AnomalyDetectorService:
             severity=severity,
             title=f"High Frequency Connections from {src_ip}",
             description=(
-                f"{src_ip} made {len(window)} connection attempts in {span:.1f} seconds "
+                f"{src_ip} made {len(attempts)} connection attempts in {span:.1f} seconds "
                 f"(about {per_minute:.0f} per minute; limit {self.high_frequency_threshold})."
             ),
             src_ip=src_ip,
-            dst_ip=window[-1].dst_ip,
-            related_event_ids=self._event_ids(window),
+            dst_ip=attempts[-1].dst_ip,
+            related_event_ids=self._event_ids(attempts),
             alert_metadata={
                 "attempts_per_minute": round(per_minute, 1),
-                "event_count": len(window),
+                "event_count": len(attempts),
                 "window_seconds": round(span, 3),
                 "detection_method": "sliding_window_rate",
             },
@@ -260,39 +427,119 @@ class AnomalyDetectorService:
         logger.warning(f"High frequency connections from {src_ip}: {per_minute:.0f}/min")
         return [alert]
 
-    def _check_suspicious_ports(self, key: str, src_ip: str, attempts: List[Attempt]) -> List[SecurityAlert]:
+    def _check_brute_force(self, key: str, src_ip: str, window: Deque[Probe],
+                           new_probes: List[Probe]) -> List[SecurityAlert]:
+        alerts = []
+        ports = {p.dst_port for p in new_probes if p.kind == "syn" and p.dst_port in self.brute_force_ports}
+        for port in ports:
+            attempts = [p for p in window if p.kind == "syn" and p.dst_port == port]
+            if len(attempts) < self.brute_force_threshold:
+                continue
+            cooldown = f"brute_force_{key}_{port}"
+            if self._is_in_cooldown(cooldown):
+                continue
+            span = attempts[-1].time - attempts[0].time
+            alerts.append(SecurityAlert(
+                timestamp=datetime.utcnow(),
+                alert_type=AlertType.BRUTE_FORCE,
+                severity=AlertSeverity.HIGH,
+                title=f"Possible Brute Force on Port {port} from {src_ip}",
+                description=(
+                    f"{src_ip} opened {len(attempts)} new connections to port {port} in {span:.1f} seconds, "
+                    f"the pattern of repeated login attempts."
+                ),
+                src_ip=src_ip,
+                dst_ip=attempts[-1].dst_ip,
+                dst_port=port,
+                related_event_ids=self._event_ids(attempts),
+                alert_metadata={
+                    **sender_fingerprint(a.os_guess for a in attempts),
+                    "connections": len(attempts),
+                    "window_seconds": round(span, 3),
+                    "threshold": self.brute_force_threshold,
+                    "detection_method": "repeated_connections_to_login_port",
+                },
+            ))
+            alerts[-1].description += fingerprint_text(alerts[-1].alert_metadata)
+            self._start_cooldown(cooldown)
+            self.stats["brute_force_detected"] += 1
+            logger.warning(f"Possible brute force from {src_ip} on port {port}: {len(attempts)} connections")
+        return alerts
+
+    def _check_syn_flood(self, dest: tuple, now: float) -> Optional[SecurityAlert]:
+        host_id, dst_ip, dst_port = dest
+        half_open, sources = self.floods.half_open(dest, now)
+        if half_open < self.syn_flood_threshold:
+            return None
+        cooldown = f"syn_flood_{host_id}|{dst_ip}|{dst_port}"
+        if self._is_in_cooldown(cooldown):
+            return None
+
+        cookies = syn_cookies_enabled() if host_id is None else None
+        cookie_text = {
+            0: " SYN cookies are OFF on this server: enable net.ipv4.tcp_syncookies.",
+            1: " SYN cookies are on (used when the backlog fills).",
+            2: " SYN cookies are always on.",
+        }.get(cookies, "")
+        window = self.floods.window_seconds
+        meta = sender_fingerprint(self.floods.fingerprints(dest))
+        self._start_cooldown(cooldown)
+        self.stats["syn_floods_detected"] += 1
+        logger.warning(f"SYN flood against {dst_ip}:{dst_port}: {half_open} half-open from {sources} sources")
+        return SecurityAlert(
+            timestamp=datetime.utcnow(),
+            alert_type=AlertType.SYN_FLOOD,
+            severity=AlertSeverity.CRITICAL if cookies == 0 else AlertSeverity.HIGH,
+            title=f"SYN Flood Against {dst_ip}:{dst_port}",
+            description=(
+                f"{half_open} connections to {dst_ip}:{dst_port} were opened but never completed in the "
+                f"last {window:.0f} seconds, from {sources} different source addresses.{cookie_text}"
+                f"{fingerprint_text(meta)}"
+            ),
+            src_ip=None,
+            dst_ip=dst_ip,
+            dst_port=dst_port,
+            alert_metadata={
+                "half_open": half_open,
+                "distinct_sources": sources,
+                "window_seconds": window,
+                "syn_cookies": cookies,
+                "detection_method": "half_open_per_destination",
+                **meta,
+            },
+        )
+
+    def _check_suspicious_ports(self, key: str, src_ip: str, probes: List[Probe]) -> List[SecurityAlert]:
         # A known scanner touches many sensitive ports; the scan alert covers it
         if self._is_in_cooldown(f"port_scan_{key}"):
             return []
 
         alerts = []
-        for attempt in attempts:
-            if attempt.dst_port not in self.suspicious_ports:
+        for probe in probes:
+            if probe.kind not in CONNECTION_PROBES or probe.dst_port not in self.suspicious_ports:
                 continue
 
-            cooldown = f"suspicious_port_{key}_{attempt.dst_port}"
+            cooldown = f"suspicious_port_{key}_{probe.dst_port}"
             if self._is_in_cooldown(cooldown):
                 continue
 
             alerts.append(
                 SecurityAlert.create_suspicious_port_alert(
                     src_ip=src_ip,
-                    dst_ip=attempt.dst_ip,
-                    dst_port=attempt.dst_port,
-                    event_ids=[attempt.event_id] if attempt.event_id is not None else [],
+                    dst_ip=probe.dst_ip,
+                    dst_port=probe.dst_port,
+                    event_ids=[probe.event_id] if probe.event_id is not None else [],
                 )
             )
             self._start_cooldown(cooldown)
             self.stats["suspicious_ports_detected"] += 1
-            logger.warning(
-                f"Suspicious port access: {src_ip} -> {attempt.dst_ip}:{attempt.dst_port}"
-            )
+            logger.warning(f"Suspicious port access: {src_ip} -> {probe.dst_ip}:{probe.dst_port}")
         return alerts
 
     @staticmethod
-    def _event_ids(window: Deque[Attempt]) -> List[int]:
-        """Most recent event IDs in the window, capped"""
-        ids = [a.event_id for a in window if a.event_id is not None]
+    def _event_ids(probes) -> List[int]:
+        """Most recent event IDs, capped"""
+        ids = [p.event_id for p in probes if p.event_id is not None]
         return ids[-MAX_RELATED_EVENT_IDS:]
 
     def _is_in_cooldown(self, alert_key: str) -> bool:
@@ -368,6 +615,10 @@ class AnomalyDetectorService:
             "alert_cooldown_seconds": self.alert_cooldown.total_seconds(),
             "active_cooldowns": len(self.recent_alerts),
             "tracked_sources": len(self.windows),
+            "tracked_flood_destinations": len(self.floods.pending),
+            "brute_force_threshold": self.brute_force_threshold,
+            "syn_flood_threshold": self.syn_flood_threshold,
+            "trusted_sources": [str(n) for n in self.trusted_networks],
             "kernel_detection": self.kernel_detection,
         }
 
@@ -388,6 +639,7 @@ class AnomalyDetectorService:
         ]
         for src in idle_sources:
             del self.windows[src]
+        self.floods.forget_idle(now.timestamp())
 
         if expired_keys or idle_sources:
             logger.debug(
