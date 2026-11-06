@@ -51,7 +51,10 @@ def sh(cmd, check_rc=True, **kw):
 
 def load(*params):
     unload()
-    sh("modprobe -a nf_conntrack nf_socket_ipv4 nf_socket_ipv6")
+    # Loadable modules on distribution kernels, built in on test kernels
+    sh("modprobe -a nf_conntrack nf_socket_ipv4 nf_socket_ipv6", check_rc=False)
+    if not os.path.isdir("/sys/module/nf_conntrack"):
+        raise RuntimeError("nf_conntrack is neither loaded nor built in")
     sh(["insmod", KO, *params])
 
 
