@@ -359,7 +359,7 @@ def test_source_table_cap():
     log = h.sh("dmesg")
     h.check("no slab objects left behind at unload", "still has objects" not in log and "kguard_src" not in log)
 
-    if os.path.isdir("/sys/kernel/debug/kcsan"):
+    if os.path.exists("/sys/kernel/debug/kcsan"):
         print("SKIP  1,000,000-source scale test on a KCSAN kernel (hours under emulation)", flush=True)
         return
 
