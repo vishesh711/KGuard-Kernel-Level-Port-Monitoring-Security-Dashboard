@@ -104,3 +104,6 @@ kernel/tools/kguard_reader
 
 # Kernel VM test output
 kernel/tests/out/
+
+# kguard-agent build output
+agent/build/
