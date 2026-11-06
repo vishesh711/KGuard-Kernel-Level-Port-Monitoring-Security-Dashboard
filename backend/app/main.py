@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 
-from .api import alerts_router, events_router, health_router
+from .api import agents_router, alerts_router, events_router, health_router
 from .config import settings
 from .database import check_db_connection, init_db
 from .services.anomaly_detector import anomaly_detector
@@ -114,6 +114,7 @@ if not settings.debug:
 app.include_router(events_router)
 app.include_router(alerts_router)
 app.include_router(health_router)
+app.include_router(agents_router)
 
 
 @app.get("/")

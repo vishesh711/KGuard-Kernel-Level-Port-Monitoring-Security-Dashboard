@@ -36,6 +36,7 @@ async def get_events(
     is_suspicious: Optional[bool] = Query(None, description="Filter by suspicious flag"),
     direction: Optional[str] = Query(None, pattern="^(in|out|fwd)$", description="Filter by direction"),
     process_name: Optional[str] = Query(None, description="Filter by process name"),
+    host_id: Optional[int] = Query(None, ge=0, description="Filter by agent (0: this server)"),
     start_time: Optional[datetime] = Query(None, description="Start time filter"),
     end_time: Optional[datetime] = Query(None, description="End time filter"),
     db: Session = Depends(get_db)
@@ -63,6 +64,10 @@ async def get_events(
             query = query.filter(NetworkEvent.direction == direction)
         if process_name:
             query = query.filter(NetworkEvent.process_name == process_name)
+        if host_id is not None:
+            query = query.filter(
+                NetworkEvent.host_id.is_(None) if host_id == 0 else NetworkEvent.host_id == host_id
+            )
         if start_time:
             query = query.filter(NetworkEvent.created_at >= start_time)
         if end_time:

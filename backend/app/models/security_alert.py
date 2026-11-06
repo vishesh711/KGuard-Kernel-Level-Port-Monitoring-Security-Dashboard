@@ -71,6 +71,9 @@ class SecurityAlert(Base):
     dst_port = Column(Integer, nullable=True,
                      comment="Destination port if applicable")
 
+    host_id = Column(Integer, nullable=True, index=True,
+                     comment="Agent whose traffic raised the alert; empty for this server")
+
     # Related data
     related_event_ids = Column(JSON, nullable=True,
                               comment="IDs of related network events")
@@ -120,7 +123,8 @@ class SecurityAlert(Base):
             "acknowledged_by": self.acknowledged_by,
             "resolved": self.resolved,
             "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
-            "resolution_notes": self.resolution_notes
+            "resolution_notes": self.resolution_notes,
+            "host_id": self.host_id,
         }
 
     @classmethod

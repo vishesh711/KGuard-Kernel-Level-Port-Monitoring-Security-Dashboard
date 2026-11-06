@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     kernel_detection: str = "auto"
     kguard_module_path: str = "/sys/module/kguard"
 
+    # Agents (remote hosts). Enrollment is disabled while the key is empty.
+    agent_enrollment_key: str = ""
+    max_ingest_events: int = 20000
+
     # Anomaly Detection
     # A source becomes a port scanner after trying this many distinct ports
     # within the detection window
