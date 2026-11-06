@@ -218,6 +218,7 @@ class AnomalyDetectorService:
             "syn_floods_detected": 0,
             "spoofing_detected": 0,
             "amplification_detected": 0,
+            "dns_tunnels_detected": 0,
             "last_analysis": None,
         }
 

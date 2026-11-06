@@ -26,8 +26,12 @@ from ..config import settings
 from ..database import get_db
 from ..models.agent import Agent
 from ..services.data_collector import data_collector
+from ..services.payloads import payload_service
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
+
+# The agent sends at most 256 per batch
+MAX_INGEST_PAYLOADS = 2000
 
 
 def hash_token(token: str) -> str:
@@ -49,7 +53,10 @@ class IngestRequest(BaseModel):
     agent: AgentInfo = AgentInfo()
     kernel_dropped: int = Field(0, ge=0)
     queue_dropped: int = Field(0, ge=0)
+    payload_dropped: int = Field(0, ge=0)
     events: List[Dict[str, Any]] = []
+    # DNS messages and TLS ClientHellos sampled by the eBPF engine
+    payloads: List[Dict[str, Any]] = []
 
 
 @router.post("/enroll")
@@ -98,8 +105,13 @@ async def ingest(
     if len(body.events) > settings.max_ingest_events:
         raise HTTPException(status_code=413, detail=f"At most {settings.max_ingest_events} events per batch")
 
+    if len(body.payloads) > MAX_INGEST_PAYLOADS:
+        raise HTTPException(status_code=413,
+                            detail=f"At most {MAX_INGEST_PAYLOADS} payload samples per batch")
+
     events = data_collector.valid_events(body.events)
     stored = await data_collector.ingest(events, host_id=agent.id) if events else 0
+    samples = await payload_service.ingest(body.payloads, host_id=agent.id) if body.payloads else {}
 
     agent.last_seen = datetime.utcnow()
     agent.remote_addr = request.client.host if request.client else None
@@ -110,9 +122,11 @@ async def ingest(
     # The agent reports running totals
     agent.kernel_dropped = body.kernel_dropped
     agent.queue_dropped = body.queue_dropped
+    agent.payload_dropped = body.payload_dropped
     db.commit()
 
-    return {"accepted": stored, "rejected": len(body.events) - len(events)}
+    return {"accepted": stored, "rejected": len(body.events) - len(events),
+            "payloads_accepted": samples.get("accepted", 0)}
 
 
 @router.get("/")

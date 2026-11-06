@@ -75,8 +75,8 @@ jobs:
         run: make -C kernel checkpatch
       - name: User-space tools
         run: make -C kernel tools
-      - name: Lint Python tools and tests (ruff)
-        run: pipx run ruff check kernel/tools kernel/tests --config kernel/ruff.toml
+      - name: Lint Python tools, tests and lab scripts (ruff)
+        run: pipx run ruff check kernel/tools kernel/tests scripts --config kernel/ruff.toml
 
   agent:
     name: Agent (eBPF + C)

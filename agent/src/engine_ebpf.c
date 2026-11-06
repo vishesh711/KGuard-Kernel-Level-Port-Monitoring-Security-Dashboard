@@ -41,11 +41,14 @@ struct block_value {
 	uint64_t drops;
 };
 
+/* Same as struct counters in kguard.bpf.c (checked against the map at open) */
 struct counters {
 	uint64_t packets;
 	uint64_t events;
 	uint64_t ringbuf_full;
 	uint64_t blocked;
+	uint64_t payloads;
+	uint64_t payloads_full;
 };
 
 /* Same as struct port_key / struct owner in kguard.bpf.c */
@@ -78,6 +81,8 @@ static double last_offset_update;
 
 static event_cb current_cb;
 static void *current_ctx;
+static payload_cb payload_handler;
+static void *payload_ctx;
 
 static int64_t clock_ns(clockid_t id)
 {
@@ -181,6 +186,26 @@ static int on_event(void *ctx, void *data, size_t size)
 	return 0;
 }
 
+static int on_payload(void *ctx, void *data, size_t size)
+{
+	struct kguard_payload p;
+
+	(void)ctx;
+	if (size < sizeof(p) || !payload_handler)
+		return 0;
+	/* Copy: the consumer's view of a BPF ring buffer is mapped read-only */
+	memcpy(&p, data, sizeof(p));
+	p.timestamp_ns += mono_to_real;
+	payload_handler(&p, payload_ctx);
+	return 0;
+}
+
+static void ebpf_set_payload_cb(payload_cb cb, void *ctx)
+{
+	payload_handler = cb;
+	payload_ctx = ctx;
+}
+
 /*
  * Services that were already listening (or had UDP ports bound) before the
  * agent started never pass through the listen/bind hooks. Seed their
@@ -251,6 +276,7 @@ static int ebpf_open(const struct agent_config *cfg)
 	if (!stat("/proc/self/ns/net", &ns))
 		skel->rodata->kguard_netns = (uint32_t)ns.st_ino;
 	bpf_map__set_max_entries(skel->maps.events, cfg->ringbuf_mb << 20);
+	skel->rodata->capture_payloads = !cfg->no_payloads && payload_handler;
 	if (!ensure_bpffs())
 		bpf_map__set_pin_path(skel->maps.blocklist, BLOCKLIST_PIN);
 
@@ -258,6 +284,12 @@ static int ebpf_open(const struct agent_config *cfg)
 	if (err) {
 		log_err("loading eBPF programs failed: %s (needs root, BTF and kernel >= 5.17)",
 			strerror(-err));
+		return -1;
+	}
+	/* A per-CPU map lookup writes ncpus * value_size bytes into our buffer */
+	if (bpf_map__value_size(skel->maps.stats) != sizeof(struct counters)) {
+		log_err("eBPF stats map does not match the agent (%u vs %zu bytes); rebuild",
+			bpf_map__value_size(skel->maps.stats), sizeof(struct counters));
 		return -1;
 	}
 	/* fentry/fexit/tp_btf; XDP and TC are attached per interface below */
@@ -294,7 +326,7 @@ static int ebpf_open(const struct agent_config *cfg)
 
 	update_clock_offset();
 	rb = ring_buffer__new(bpf_map__fd(skel->maps.events), on_event, NULL, NULL);
-	if (!rb) {
+	if (!rb || ring_buffer__add(rb, bpf_map__fd(skel->maps.payloads), on_payload, NULL)) {
 		log_err("ring buffer setup failed");
 		return -1;
 	}
@@ -378,6 +410,7 @@ const struct engine ebpf_engine = {
 	.poll		= ebpf_poll,
 	.kernel_dropped	= ebpf_dropped,
 	.close		= ebpf_close,
+	.set_payload_cb	= ebpf_set_payload_cb,
 };
 
 /* ---- blocklist commands (work on the pinned map) ---- */

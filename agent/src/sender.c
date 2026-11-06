@@ -6,7 +6,7 @@
  *            -> {"agent_id": N, "token": "..."}; token saved 0600
  *   ingest:  POST {server}/api/agents/ingest   (Authorization: Bearer)
  *            body: {"agent": {...}, "kernel_dropped": N, "queue_dropped": N,
- *                   "events": [ ... ]}
+ *                   "payload_dropped": N, "events": [ ... ], "payloads": [ ... ]}
  *
  * A batch is retried until the backend accepts it (exponential backoff up
  * to 30 s), so events are not lost while the backend restarts; meanwhile
@@ -161,9 +161,21 @@ static void sleep_ms(unsigned int ms)
 		;
 }
 
-int sender_run(const struct agent_config *cfg, struct queue *q, const struct engine *eng)
+/* Payload samples per batch (each up to ~2 KB of JSON) */
+#define PAYLOADS_PER_BATCH	256
+
+static void free_strings(char **s, size_t n)
+{
+	while (n--)
+		free(s[n]);
+}
+
+int sender_run(const struct agent_config *cfg, struct queue *q, struct strqueue *pq,
+	       const struct engine *eng)
 {
 	struct kguard_event *batch = calloc(cfg->batch_size, sizeof(*batch));
+	char *payloads[PAYLOADS_PER_BATCH];
+	size_t np;
 	char url[1024], auth[600], host[256];
 	unsigned int backoff = 0;
 	uint64_t sent = 0;
@@ -181,9 +193,10 @@ int sender_run(const struct agent_config *cfg, struct queue *q, const struct eng
 		snprintf(auth, sizeof(auth), "Authorization: Bearer %s", cfg->token);
 	}
 
-	while (!agent_stop || queue_length(q)) {
+	while (!agent_stop || queue_length(q) || strqueue_length(pq)) {
 		n = queue_pop(q, batch, cfg->batch_size, cfg->flush_ms);
-		if (!n)
+		np = strqueue_pop(pq, payloads, PAYLOADS_PER_BATCH);
+		if (!n && !np)
 			continue;
 
 		if (cfg->stdout_mode) {
@@ -192,6 +205,9 @@ int sender_run(const struct agent_config *cfg, struct queue *q, const struct eng
 				json_event(&body, &batch[i]);
 				puts(body.data);
 			}
+			for (i = 0; i < np; i++)
+				puts(payloads[i]);
+			free_strings(payloads, np);
 			fflush(stdout);
 			continue;
 		}
@@ -199,16 +215,22 @@ int sender_run(const struct agent_config *cfg, struct queue *q, const struct eng
 		body.len = 0;
 		buf_printf(&body,
 			   "{\"agent\":{\"engine\":\"%s\",\"version\":\"%s\",\"hostname\":\"%s\"},"
-			   "\"kernel_dropped\":%llu,\"queue_dropped\":%llu,\"events\":[",
+			   "\"kernel_dropped\":%llu,\"queue_dropped\":%llu,\"payload_dropped\":%llu,"
+			   "\"events\":[",
 			   eng->name, AGENT_VERSION, host,
 			   (unsigned long long)eng->kernel_dropped(),
-			   (unsigned long long)queue_dropped(q));
+			   (unsigned long long)queue_dropped(q),
+			   (unsigned long long)strqueue_dropped(pq));
 		for (i = 0; i < n; i++) {
 			if (i)
 				buf_printf(&body, ",");
 			json_event(&body, &batch[i]);
 		}
+		buf_printf(&body, "],\"payloads\":[");
+		for (i = 0; i < np; i++)
+			buf_printf(&body, "%s%s", i ? "," : "", payloads[i]);
 		buf_printf(&body, "]}");
+		free_strings(payloads, np);
 
 		/* Retry this batch until accepted; the queue keeps filling meanwhile */
 		for (;;) {

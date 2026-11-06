@@ -136,3 +136,60 @@ void json_event(struct buf *b, const struct kguard_event *e)
 		   e->tcp_window, e->tcp_mss,
 		   e->tcp_opts_len && e->tcp_wscale != 0xff ? e->tcp_wscale : -1, opts);
 }
+
+static void base64(struct buf *b, const uint8_t *data, size_t len)
+{
+	static const char table[] =
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	char out[4 * ((KGUARD_PAYLOAD_MAX + 2) / 3) + 1];
+	size_t i, o = 0;
+
+	for (i = 0; i + 2 < len; i += 3) {
+		uint32_t v = data[i] << 16 | data[i + 1] << 8 | data[i + 2];
+
+		out[o++] = table[v >> 18];
+		out[o++] = table[(v >> 12) & 63];
+		out[o++] = table[(v >> 6) & 63];
+		out[o++] = table[v & 63];
+	}
+	if (i < len) {
+		uint32_t v = data[i] << 16 | (i + 1 < len ? data[i + 1] << 8 : 0);
+
+		out[o++] = table[v >> 18];
+		out[o++] = table[(v >> 12) & 63];
+		out[o++] = i + 1 < len ? table[(v >> 6) & 63] : '=';
+		out[o++] = '=';
+	}
+	out[o] = '\0';
+	buf_printf(b, "%s", out);
+}
+
+void json_payload(struct buf *b, const struct kguard_payload *p)
+{
+	char src[INET6_ADDRSTRLEN], dst[INET6_ADDRSTRLEN], comm[17];
+	int af = p->family == 10 ? AF_INET6 : AF_INET;
+	bool proc = p->info & KGUARD_EVF_PROC;
+	size_t len = p->len < KGUARD_PAYLOAD_MAX ? p->len : KGUARD_PAYLOAD_MAX;
+	int i;
+
+	inet_ntop(af, p->src_addr, src, sizeof(src));
+	inet_ntop(af, p->dst_addr, dst, sizeof(dst));
+	for (i = 0; i < 16 && proc && p->comm[i]; i++) {
+		char c = p->comm[i];
+
+		comm[i] = (c >= 0x20 && c < 0x7f && c != '"' && c != '\\') ? c : '?';
+	}
+	comm[i] = '\0';
+
+	buf_printf(b,
+		   "{\"type\":\"payload\",\"kind\":\"%s\",\"timestamp\":%llu,\"family\":%d,"
+		   "\"src_ip\":\"%s\",\"dst_ip\":\"%s\",\"src_port\":%u,\"dst_port\":%u,"
+		   "\"protocol\":\"%s\",\"direction\":\"%s\",\"netns\":%u,\"ifindex\":%u,"
+		   "\"tcp_seq\":%u,\"orig_len\":%u,\"pid\":%d,\"comm\":\"%s\",\"data\":\"",
+		   p->kind == KGUARD_PAYLOAD_DNS ? "dns" : "tls",
+		   (unsigned long long)p->timestamp_ns, af == AF_INET6 ? 6 : 4, src, dst,
+		   p->src_port, p->dst_port, protocol_name(p->protocol), direction_name(p->direction),
+		   p->netns, p->ifindex, p->tcp_seq, p->orig_len, proc ? (int)p->pid : -1, comm);
+	base64(b, p->data, len);
+	buf_printf(b, "\"}");
+}

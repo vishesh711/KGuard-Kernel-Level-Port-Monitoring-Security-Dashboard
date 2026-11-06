@@ -96,6 +96,21 @@ class Settings(BaseSettings):
     # times the request bytes, and at least reflector_min_bytes in the window
     reflector_ratio: float = 10.0
     reflector_min_bytes: int = 100_000
+    # DNS tunnelling (DNS_TUNNELING), from eBPF agents' DNS samples: per
+    # client and registered domain within the window (see dns_tunnel.py)
+    dns_tunnel_window_seconds: int = 60
+    dns_tunnel_min_queries: int = 20
+    dns_tunnel_score: float = 0.6
+    # Reverse lookups and DNS blocklist / reputation services encode data in
+    # names on purpose
+    dns_tunnel_allowlist: List[str] = [
+        "in-addr.arpa", "ip6.arpa", "spamhaus.org", "spamcop.net", "sorbs.net", "surbl.org",
+        "uribl.com", "barracudacentral.org", "sophosxl.net",
+    ]
+    # Known-bad TLS client fingerprints (MALICIOUS_TLS): a CSV file whose first
+    # column is a JA3 (32 hex) or JA4 fingerprint and whose other columns are
+    # a label, e.g. abuse.ch SSLBL's ja3_fingerprints.csv. Empty: no matching.
+    tls_fingerprint_blocklist: str = ""
     # Traffic baseline (UNUSUAL_TRAFFIC): per host and port, per interval
     baseline_interval_seconds: int = 60
     baseline_alpha: float = 0.1
