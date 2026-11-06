@@ -22,6 +22,7 @@ from .services.anomaly_detector import anomaly_detector
 from .services.baseline import traffic_baseline
 from .services.data_collector import data_collector
 from .services.kernel_alerts import kernel_alerts
+from .services.packet_capture import packet_capture
 from .services.websocket_manager import connection_manager
 
 # Configure logging
@@ -74,6 +75,7 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("Database connection failed")
     logger.info("Database initialized successfully")
 
+    packet_capture.start()
     background = [
         asyncio.create_task(data_collector.start_collection(), name="data_collector"),
         asyncio.create_task(periodic_tasks(), name="periodic_tasks"),
@@ -86,6 +88,7 @@ async def lifespan(app: FastAPI):
         logger.info("Shutting down KGuard Backend Service")
         data_collector.stop_collection()
         kernel_alerts.close()
+        packet_capture.stop()
         for task in background:
             task.cancel()
         await asyncio.gather(*background, return_exceptions=True)

@@ -186,10 +186,12 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
 - [x] **N5.9 Sliding-window baseline.** Learn normal per-hour traffic per host/port; alert on large deviations.
   *Done when:* a replayed traffic spike raises an `UNUSUAL_TRAFFIC` alert.
   *Status:* Done. EWMA mean/variance of incoming connection attempts per host and port per minute; UNUSUAL_TRAFFIC after warm-up when far above mean (6 sigma and 5x); spikes are not learned. Adapts to the recent past; no time-of-day model. Verified with replayed spikes in unit tests.
-- [ ] **N5.10 Flow export.** Group packets into flows and export IPFIX (or NetFlow v9).
+- [x] **N5.10 Flow export.** Group packets into flows and export IPFIX (or NetFlow v9).
   *Done when:* `nfdump` or Wireshark decodes the exported flows.
-- [ ] **N5.11 Packet capture on alert.** Keep a short rolling buffer; on a high-severity alert, save the surrounding packets as `.pcap`.
+  *Status:* Done. backend/app/services/flow_export.py: unidirectional flows per observation domain (agent, or network namespace on this server) and 5-tuple; exported on FIN/RST, idle and active timeouts or a full table; IPFIX (RFC 7011) over UDP with IPv4/IPv6 templates refreshed every 30 s, messages under 1400 bytes. Verified (scripts/flow_pcap_lab.py): nfcapd/nfdump 1.7 stores the flows, whose packets and bytes equal tcpdump's for a 2 MB download in both directions; Wireshark decodes all records without errors. The lab caught packets being counted twice (seen in two namespaces), fixed by one observation domain per namespace.
+- [x] **N5.11 Packet capture on alert.** Keep a short rolling buffer; on a high-severity alert, save the surrounding packets as `.pcap`.
   *Done when:* the saved file opens in Wireshark and contains the attack.
+  *Status:* Done. backend/app/services/packet_capture.py: AF_PACKET TPACKET_V3 ring mmap'ed into the backend, classic BPF socket filter cutting packets to 256 bytes in the kernel, blocks kept for 30 s within a memory budget; on an alert of HIGH or above (this server's) the packets to or from the alert's addresses, from before and 5 s after, are saved as a nanosecond pcap, noted on the alert and served at /api/alerts/{id}/pcap. Verified: an nmap scan blocked by the kernel yields a pcap with all 200 SYN probes (20 from before the alert), nothing else, and no packet over the snap length. Off by default; agents do not capture.
 
 ## Phase 6 — Backend upgrade
 

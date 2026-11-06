@@ -29,6 +29,7 @@ from ..database import SessionLocal
 from ..models.network_event import NetworkEvent
 from .anomaly_detector import anomaly_detector
 from .fingerprint import fingerprint_syn
+from .flow_export import flow_exporter
 from .kernel_alerts import kernel_alerts
 from .kguard_device import KGuardDevice
 from .process_resolver import ProcessResolver
@@ -80,6 +81,7 @@ class DataCollectorService:
             while self.running:
                 kernel_alerts.check()
                 await self.collect_once()
+                flow_exporter.tick()
                 await asyncio.sleep(self.collection_interval)
         finally:
             self.running = False
@@ -87,6 +89,7 @@ class DataCollectorService:
     def stop_collection(self) -> None:
         logger.info("Stopping data collection service")
         self.running = False
+        flow_exporter.flush()
         self.close_device()
 
     def close_device(self) -> None:
@@ -125,6 +128,7 @@ class DataCollectorService:
         self.stats["events_stored"] += len(stored)
         self.stats["last_collection"] = datetime.utcnow()
 
+        flow_exporter.observe(stored)
         alerts = await anomaly_detector.analyze_events(stored)
         if alerts:
             self.stats["alerts_generated"] += len(alerts)

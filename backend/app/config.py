@@ -111,6 +111,24 @@ class Settings(BaseSettings):
     # column is a JA3 (32 hex) or JA4 fingerprint and whose other columns are
     # a label, e.g. abuse.ch SSLBL's ja3_fingerprints.csv. Empty: no matching.
     tls_fingerprint_blocklist: str = ""
+    # IPFIX flow export (flow_export.py): collectors as "host:port"; empty = off
+    ipfix_collectors: List[str] = []
+    ipfix_idle_timeout: int = 15
+    ipfix_active_timeout: int = 60
+    ipfix_template_refresh: int = 30
+    ipfix_max_flows: int = 100_000
+    # Packet capture on alert (packet_capture.py): records this server's
+    # traffic (first pcap_snaplen bytes of each packet) for pcap_seconds and
+    # saves the packets of each alert of pcap_min_severity or above.
+    # Needs root or CAP_NET_RAW.
+    pcap_on_alert: bool = False
+    pcap_seconds: int = 30
+    pcap_post_seconds: int = 5
+    pcap_buffer_mb: int = 64
+    pcap_snaplen: int = 256
+    pcap_min_severity: str = "HIGH"
+    pcap_dir: str = "./data/pcaps"
+    pcap_max_files: int = 200
     # Traffic baseline (UNUSUAL_TRAFFIC): per host and port, per interval
     baseline_interval_seconds: int = 60
     baseline_alpha: float = 0.1
