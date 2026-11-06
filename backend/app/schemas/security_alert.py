@@ -27,6 +27,7 @@ class AlertTypeEnum(str, Enum):
     HIGH_FREQUENCY = "HIGH_FREQUENCY"
     UNUSUAL_TRAFFIC = "UNUSUAL_TRAFFIC"
     UNKNOWN_PROTOCOL = "UNKNOWN_PROTOCOL"
+    SYN_FLOOD = "SYN_FLOOD"
 
 
 class SecurityAlertBase(BaseModel):

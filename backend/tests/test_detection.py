@@ -52,9 +52,10 @@ def test_attempts_outside_the_window_are_forgotten(fake_kernel, collect, db):
 
 
 def test_established_traffic_is_not_a_scan(fake_kernel, collect, db):
-    # A busy server replying from many ports: ACK packets, not connection attempts
+    # A busy server's replies to this host's many client connections: ACKs to
+    # this host's ephemeral ports, not probes
     fake_kernel.write(
-        [make_event(src_ip="192.0.2.50", dst_port=1000 + p, flags=TCP_ACK) for p in range(50)]
+        [make_event(src_ip="192.0.2.50", src_port=443, dst_port=40000 + p, flags=TCP_ACK) for p in range(50)]
     )
     collect()
     assert alert_types(db) == []

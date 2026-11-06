@@ -25,11 +25,14 @@ from ..models.network_event import NetworkEvent
 from ..models.security_alert import AlertSeverity, AlertType, SecurityAlert
 from .anomaly_detector import anomaly_detector
 from .kguard_netlink import KGuardEventSocket
+from .probes import CONNECTION_PROBES, LABELS, classify_probe
 from .websocket_manager import broadcast_security_alert
 
 logger = logging.getLogger(__name__)
 
 RETRY_SECONDS = 10.0
+# How far back to look at a source's events to name the scan type
+SCAN_LOOKBACK_SECONDS = 15
 # Events from an alerted source within this many seconds are marked suspicious
 FLAG_SECONDS = 60
 MAX_RELATED_EVENT_IDS = 100
@@ -151,6 +154,10 @@ class KernelAlertService:
 
         event_type = alert.alert_type.value.lower()
         ip = event["src_ip"]
+        if event["type"] == "scan":
+            # A fast scan can end before the collector has stored its events;
+            # wait for them so the scan type can be named
+            await self._wait_for_events(ip)
         db = SessionLocal()
         try:
             # Link and mark the source's recent events (kernel alerts carry no event IDs)
@@ -158,6 +165,8 @@ class KernelAlertService:
             ids = [row.id for row in db.query(NetworkEvent.id)
                    .filter(NetworkEvent.src_ip == ip, NetworkEvent.created_at >= since)
                    .order_by(NetworkEvent.id.desc()).limit(MAX_RELATED_EVENT_IDS)]
+            if event["type"] == "scan":
+                self._label_scan(db, alert, ip)
             if ids:
                 db.execute(update(NetworkEvent).where(NetworkEvent.id.in_(ids))
                            .values(is_suspicious=True, event_type=event_type))
@@ -178,6 +187,44 @@ class KernelAlertService:
         logger.warning(f"Kernel alert: {alert.title} (action: {event['action']})")
         await broadcast_security_alert(alert.to_dict())
         return alert
+
+    @staticmethod
+    async def _wait_for_events(ip: str, timeout: float = 3.0) -> None:
+        since = datetime.utcnow() - timedelta(seconds=SCAN_LOOKBACK_SECONDS)
+        deadline = time.monotonic() + timeout
+        while True:
+            db = SessionLocal()
+            try:
+                found = db.query(NetworkEvent.id).filter(
+                    NetworkEvent.src_ip == ip, NetworkEvent.created_at >= since,
+                    NetworkEvent.host_id.is_(None)).first()
+            finally:
+                db.close()
+            if found or time.monotonic() >= deadline:
+                return
+            await asyncio.sleep(0.25)
+
+    @staticmethod
+    def _label_scan(db, alert: SecurityAlert, ip: str) -> None:
+        """Name the scan type (the kernel counts SYN and UDP probes) from the source's recent events"""
+        since = datetime.utcnow() - timedelta(seconds=SCAN_LOOKBACK_SECONDS)
+        rows = (db.query(NetworkEvent.protocol, NetworkEvent.flags, NetworkEvent.ct_state,
+                         NetworkEvent.dst_port, NetworkEvent.direction)
+                .filter(NetworkEvent.src_ip == ip, NetworkEvent.created_at >= since,
+                        NetworkEvent.host_id.is_(None))
+                .limit(20000).all())
+        ports: Dict[str, set] = {}
+        for protocol, flags, ct_state, dst_port, direction in rows:
+            if direction == "out":
+                continue
+            kind = classify_probe(protocol, flags, ct_state, dst_port)
+            if kind in CONNECTION_PROBES:
+                ports.setdefault(kind, set()).add(dst_port)
+        if not ports:
+            return
+        kind = max(ports, key=lambda k: len(ports[k]))
+        alert.title = f"{LABELS[kind]} Scan Detected from {ip}"
+        alert.alert_metadata = {**alert.alert_metadata, "scan_type": kind}
 
     def reset(self) -> None:
         self._flagged.clear()

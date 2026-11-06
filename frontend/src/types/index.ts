@@ -70,6 +70,7 @@ export type AlertType =
   | 'HIGH_FREQUENCY'
   | 'UNUSUAL_TRAFFIC'
   | 'UNKNOWN_PROTOCOL'
+  | 'SYN_FLOOD'
 
 export type AlertSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
 

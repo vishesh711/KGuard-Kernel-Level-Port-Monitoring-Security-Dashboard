@@ -162,12 +162,18 @@ class KGuardDevice:
         os.close(self.fd)
 
 
-def build_fake_device(path: str, rings: List[List[Dict[str, Any]]], slots: int = 64,
+def build_fake_device(path: str, rings: List[List[Dict[str, Any]]], slots: Optional[int] = None,
                       dropped: int = 0) -> None:
     """
     Write a regular file with the same layout as the /dev/kguard mapping.
-    KGuardDevice can open it like the real device; used by tests.
+    KGuardDevice can open it like the real device; used by tests. By default
+    each ring gets the smallest power-of-two size (at least 64) that holds
+    the most events given for any ring.
     """
+    if slots is None:
+        slots = 64
+        while slots < max((len(r) for r in rings), default=0):
+            slots *= 2
     page = mmap.PAGESIZE
     stride = page + ((slots * EVENT.size + page - 1) // page) * page
     size = page + len(rings) * stride
