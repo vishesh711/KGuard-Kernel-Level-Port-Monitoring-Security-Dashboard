@@ -253,7 +253,7 @@ echo 1 | sudo tee /sys/kernel/tracing/events/kguard/enable
 ## Testing
 
 `tests/vm_tests.py` loads the module and checks every feature with real
-traffic (73 checks): lossless zero-copy reads at 5,000 packets/s, idle CPU
+traffic (84 checks): lossless zero-copy reads at 5,000 packets/s, idle CPU
 use, exclusive access, process attribution (curl, an `nc` listener),
 conntrack states including invalid packets, the SYN header fields (TTL,
 Linux's option order, MSS, window scale), scapy-built tricky packets (IP
