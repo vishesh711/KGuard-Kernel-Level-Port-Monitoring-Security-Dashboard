@@ -39,6 +39,13 @@ def v2_event(**fields):
         "comm": "",
         "uid": -1,
         "sock_ino": 0,
+        "ttl": 64,
+        "ip_len": 52,
+        "df": True,
+        "tcp_window": 502,
+        "tcp_mss": 0,
+        "tcp_wscale": -1,
+        "tcp_options": "",
     }
     base.update(fields)
     return base
@@ -49,6 +56,8 @@ def test_encode_decode_round_trip():
         v2_event(),
         v2_event(family=6, src_ip="2001:db8::1", dst_ip="::1", protocol="UDP", direction="out",
                  pid=4242, comm="curl", uid=1000, sock_ino=98765, ct_state="new"),
+        v2_event(flags=0x02, ttl=128, tcp_window=64240, tcp_mss=1460, tcp_wscale=8,
+                 tcp_options="M,N,W,N,N,S"),
     ):
         assert decode_event(encode_event(event)) == event
 

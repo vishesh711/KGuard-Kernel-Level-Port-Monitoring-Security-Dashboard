@@ -274,6 +274,63 @@ for i in range({count}):
     in_ns([sys.executable, "-c", code], check=True)
 
 
+def forge(packets):
+    """Send scapy packets from the attacker's interface at layer 2, so no source address is refused"""
+    mac = open("/sys/class/net/kgv0/address").read().strip()
+    code = ("from scapy.all import Ether, IP, TCP, UDP, sendp\n"
+            f"sendp([Ether(dst='{mac}') / p for p in [{', '.join(packets)}]], iface='kgv1', verbose=0)\n")
+    in_ns([sys.executable, "-c", code], check=True)
+
+
+def test_spoofed_sources():
+    """N5.5: packets from a real interface claiming impossible sources raise SPOOF alerts"""
+    reset_guard()
+    ctl("allow", "127.0.0.0/8")  # a forged allowlisted address must not slip past
+    before = stats()["spoofed"]
+    with AlertWatch() as watch:
+        forge([f"IP(src='127.0.0.1', dst='{HOST4}') / TCP(dport=8080, flags='S')",
+               f"IP(src='{HOST4}', dst='{HOST4}') / TCP(sport=8080, dport=8080, flags='S')",
+               f"IP(src='224.0.0.9', dst='{HOST4}') / UDP(dport=520)",
+               f"IP(src='{ATK4}', dst='{HOST4}') / TCP(dport=8080, flags='S')"])
+        alerts = watch.alerts()
+    ctl("disallow", "127.0.0.0/8")
+    spoofs = {a["src_ip"]: a for a in alerts if a["type"] == "spoof"}
+    reasons = {ip: a["spoof_reason"] for ip, a in spoofs.items()}
+    h.check("loopback, own-address and multicast sources each raise a spoof alert",
+            reasons == {"127.0.0.1": "loopback", HOST4: "local", "224.0.0.9": "martian"}, reasons)
+    ifindex = int(open("/sys/class/net/kgv0/ifindex").read())
+    h.check("spoof alert names the arrival interface",
+            all(a["ifindex"] == ifindex for a in spoofs.values()), [a["ifindex"] for a in spoofs.values()])
+    h.check("the real attacker address is not reported as spoofed", ATK4 not in spoofs)
+    h.check("spoofed counter counts them", stats()["spoofed"] - before == 3, stats()["spoofed"] - before)
+    h.check("each spoof alert counts one packet", all(a["attempts"] == 1 for a in spoofs.values()))
+
+    # Random spoofed sources: one alert per reason every 10 s, counting the packets
+    with AlertWatch() as watch:
+        forge([f"IP(src='224.{i // 250}.{i % 250}.1', dst='{HOST4}') / UDP(dport=520)" for i in range(500)])
+        flood = [a for a in watch.alerts() if a["type"] == "spoof"]
+    h.check("500 random martian sources raise at most one alert, not one per source", len(flood) <= 1, flood)
+    time.sleep(10.5)
+    with AlertWatch() as watch:
+        forge([f"IP(src='239.1.1.1', dst='{HOST4}') / UDP(dport=520)"])
+        after = [a for a in watch.alerts() if a["type"] == "spoof"]
+    counted = sum(a["attempts"] for a in flood + after)
+    h.check("alerts count every spoofed packet they stand for (500 + 1)",
+            len(after) == 1 and counted == 501, f"{counted} counted in {len(flood + after)} alerts")
+
+    ctl("set", "enforce=1")
+    with h.KGuardDevice() as dev, AlertWatch() as watch:
+        dev.read()
+        forge([f"IP(src='127.0.0.2', dst='{HOST4}') / TCP(dport=8080, flags='S')"])
+        alerts = watch.alerts()
+        events = dev.read()
+    ctl("set", "enforce=0")
+    dropped = [a for a in alerts if a["type"] == "spoof" and a["src_ip"] == "127.0.0.2"]
+    h.check("enforce mode: spoofed packet is dropped before it is processed",
+            dropped and dropped[0]["action"] == "dropped"
+            and not [e for e in events if e["src_ip"] == "127.0.0.2"], dropped)
+
+
 def slab_objects(name="kguard_src"):
     for line in open("/proc/slabinfo"):
         if line.startswith(name + " "):
@@ -305,7 +362,7 @@ def run_all():
     with Lab():
         for test in (test_scan_alert_monitor_only, test_block_needs_enforce, test_block_and_expiry,
                      test_ipv6_block, test_allowlist_wins, test_local_never_blocked, test_syn_rate_limit,
-                     test_auto_block):
+                     test_auto_block, test_spoofed_sources):
             try:
                 test()
             except Exception as e:

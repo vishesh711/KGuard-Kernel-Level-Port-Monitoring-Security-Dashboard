@@ -1,1 +1,0 @@
-savedcmd_/home/user/KGuard-Kernel-Level-Port-Monitoring-Security-Dashboard/kernel/Module.symvers :=  scripts/mod/modpost -M -m -a      -o /home/user/KGuard-Kernel-Level-Port-Monitoring-Security-Dashboard/kernel/Module.symvers -T /home/user/KGuard-Kernel-Level-Port-Monitoring-Security-Dashboard/kernel/modules.order -i Module.symvers -e 

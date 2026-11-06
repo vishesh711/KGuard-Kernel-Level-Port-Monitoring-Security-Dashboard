@@ -23,6 +23,15 @@ export interface NetworkEvent {
   uid?: number | null
   sock_ino?: number | null
   host_id?: number | null
+  // Packet headers (kernel ABI v2) and, for SYNs, the sender's TCP fingerprint
+  ttl?: number | null
+  ip_len?: number | null
+  df?: boolean | null
+  tcp_window?: number | null
+  tcp_mss?: number | null
+  tcp_wscale?: number | null
+  tcp_options?: string | null
+  os_guess?: string | null
 }
 
 /** A remote host running kguard-agent */
@@ -71,6 +80,8 @@ export type AlertType =
   | 'UNUSUAL_TRAFFIC'
   | 'UNKNOWN_PROTOCOL'
   | 'SYN_FLOOD'
+  | 'SPOOFED_TRAFFIC'
+  | 'AMPLIFICATION'
 
 export type AlertSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
 

@@ -1,1 +1,0 @@
-savedcmd_/home/user/KGuard-Kernel-Level-Port-Monitoring-Security-Dashboard/kernel/kguard.o := ld -m elf_x86_64 -z noexecstack --no-warn-rwx-segments   -r -o /home/user/KGuard-Kernel-Level-Port-Monitoring-Security-Dashboard/kernel/kguard.o @/home/user/KGuard-Kernel-Level-Port-Monitoring-Security-Dashboard/kernel/kguard.mod 

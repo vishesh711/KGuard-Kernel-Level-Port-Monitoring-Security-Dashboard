@@ -164,7 +164,57 @@ struct pkt {
 	__u16 dport;
 	__u8 saddr[16];
 	__u8 daddr[16];
+	__u16 ip_len;
+	__u16 tcp_window;
+	__u16 tcp_mss;
+	__u8 ttl;
+	__u8 ip_flags;
+	__u8 tcp_wscale;
+	__u8 tcp_opts_len;
+	__u8 tcp_opts[KGUARD_TCP_MAX_OPTS];
 };
+
+/*
+ * SYN options: kinds in order, MSS and window scale (OS fingerprinting).
+ * Each loop pass records one option, so KGUARD_TCP_MAX_OPTS passes suffice.
+ */
+static __always_inline void parse_syn_options(struct tcphdr *th, void *end, struct pkt *p)
+{
+	__u8 *opt = (void *)(th + 1);
+	__u32 len = th->doff * 4;
+	__u32 off = 0;
+	int n;
+
+	p->tcp_wscale = 0xff;
+	if (len <= sizeof(*th))
+		return;
+	len -= sizeof(*th);
+
+	for (n = 0; n < KGUARD_TCP_MAX_OPTS; n++) {
+		__u8 *cur = opt + (off & 63);	/* off < 40; the mask tells the verifier */
+		__u8 kind, size;
+
+		if (off >= len || (void *)(cur + 2) > end)
+			break;
+		kind = cur[0];
+		p->tcp_opts[n] = kind;
+		p->tcp_opts_len = n + 1;
+		if (kind == KGUARD_TCPOPT_EOL)
+			break;
+		if (kind == KGUARD_TCPOPT_NOP) {
+			off++;
+			continue;
+		}
+		size = cur[1];
+		if (size < 2 || off + size > len)
+			break;
+		if (kind == KGUARD_TCPOPT_MSS && size == 4 && (void *)(cur + 4) <= end)
+			p->tcp_mss = (cur[2] << 8) | cur[3];
+		else if (kind == KGUARD_TCPOPT_WS && size == 3 && (void *)(cur + 3) <= end)
+			p->tcp_wscale = cur[2];
+		off += size;
+	}
+}
 
 static __always_inline int parse(void *data, void *end, struct pkt *p)
 {
@@ -183,6 +233,10 @@ static __always_inline int parse(void *data, void *end, struct pkt *p)
 			return -1;
 		p->family = AF_INET;
 		p->protocol = iph->protocol;
+		p->ttl = iph->ttl;
+		p->ip_len = bpf_ntohs(iph->tot_len);
+		if (iph->frag_off & bpf_htons(0x4000))
+			p->ip_flags |= KGUARD_IPF_DF;
 		__builtin_memcpy(p->saddr, &iph->saddr, 4);
 		__builtin_memcpy(p->daddr, &iph->daddr, 4);
 		if (bpf_ntohs(iph->frag_off) & 0x1fff) {
@@ -197,6 +251,8 @@ static __always_inline int parse(void *data, void *end, struct pkt *p)
 			return -1;
 		p->family = AF_INET6;
 		p->protocol = ip6h->nexthdr;
+		p->ttl = ip6h->hop_limit;
+		p->ip_len = bpf_ntohs(ip6h->payload_len) + sizeof(*ip6h);
 		__builtin_memcpy(p->saddr, &ip6h->saddr, 16);
 		__builtin_memcpy(p->daddr, &ip6h->daddr, 16);
 		/* Extension headers are not walked: ports only for plain TCP/UDP */
@@ -215,6 +271,9 @@ static __always_inline int parse(void *data, void *end, struct pkt *p)
 		p->tcp_flags = (th->fin ? KGUARD_TCP_FIN : 0) | (th->syn ? KGUARD_TCP_SYN : 0) |
 			       (th->rst ? KGUARD_TCP_RST : 0) | (th->psh ? KGUARD_TCP_PSH : 0) |
 			       (th->ack ? KGUARD_TCP_ACK : 0) | (th->urg ? KGUARD_TCP_URG : 0);
+		p->tcp_window = bpf_ntohs(th->window);
+		if (th->syn)
+			parse_syn_options(th, end, p);
 	} else if (p->protocol == IPPROTO_UDP) {
 		struct udphdr *uh = l4;
 
@@ -296,6 +355,14 @@ static __always_inline void emit(const struct pkt *p, __u8 direction, __u32 ifin
 	e->ifindex = ifindex;
 	if (p->fragment)
 		e->info |= KGUARD_EVF_FRAGMENT;
+	e->ttl = p->ttl;
+	e->ip_len = p->ip_len;
+	e->ip_flags = p->ip_flags;
+	e->tcp_window = p->tcp_window;
+	e->tcp_mss = p->tcp_mss;
+	e->tcp_wscale = p->tcp_wscale;
+	e->tcp_opts_len = p->tcp_opts_len;
+	__builtin_memcpy(e->tcp_opts, p->tcp_opts, sizeof(e->tcp_opts));
 
 	o = find_owner(p, direction == KGUARD_DIR_IN);
 	if (o) {

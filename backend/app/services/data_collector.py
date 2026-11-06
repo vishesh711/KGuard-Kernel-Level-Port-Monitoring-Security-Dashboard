@@ -28,6 +28,7 @@ from ..config import settings
 from ..database import SessionLocal
 from ..models.network_event import NetworkEvent
 from .anomaly_detector import anomaly_detector
+from .fingerprint import fingerprint_syn
 from .kernel_alerts import kernel_alerts
 from .kguard_device import KGuardDevice
 from .process_resolver import ProcessResolver
@@ -39,6 +40,9 @@ REQUIRED_FIELDS = ("timestamp", "src_ip", "dst_ip", "src_port", "dst_port", "pro
 
 # Most events taken from the device per collection cycle
 MAX_EVENTS_PER_CYCLE = 200_000
+# Events processed between chances for the event loop to serve API requests
+# and kernel alerts, so a flood cannot make the dashboard unresponsive
+INGEST_CHUNK = 5_000
 
 
 class DataCollectorService:
@@ -101,7 +105,11 @@ class DataCollectorService:
             if not events:
                 return 0
             self._attach_processes(events)
-            return await self.ingest(events)
+            stored = 0
+            for start in range(0, len(events), INGEST_CHUNK):
+                stored += await self.ingest(events[start:start + INGEST_CHUNK])
+                await asyncio.sleep(0)
+            return stored
         except Exception as e:
             self.stats["errors"] += 1
             logger.error(f"Error collecting events: {e}", exc_info=True)
@@ -313,7 +321,37 @@ class DataCollectorService:
             "process_name": e.get("comm") or None,
             "uid": known(e.get("uid")),
             "sock_ino": known(e.get("sock_ino"), (None, 0)),
+            **DataCollectorService._header_fields(e),
         }
+
+    @staticmethod
+    def _header_fields(e: Dict[str, Any]) -> Dict[str, Any]:
+        """Packet header details (kernel ABI v2) and, for SYNs, the sender's fingerprint"""
+        def number(key, low, high):
+            value = e.get(key)
+            if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+                return None
+            return value
+
+        ttl = number("ttl", 1, 255)  # 0: older module, field unknown
+        options = e.get("tcp_options")
+        options = options[:40] if isinstance(options, str) and options else None
+        fields = {
+            "ttl": ttl,
+            "ip_len": number("ip_len", 1, 65575) if ttl else None,
+            "df": bool(e["df"]) if ttl and isinstance(e.get("df"), bool) else None,
+            "tcp_window": number("tcp_window", 0, 65535) if ttl and e.get("protocol") == "TCP" else None,
+            "tcp_mss": number("tcp_mss", 1, 65535),
+            "tcp_wscale": number("tcp_wscale", 0, 255),
+            "tcp_options": options,
+            "os_guess": None,
+        }
+        flags = e.get("flags") or 0
+        if ttl and e.get("protocol") == "TCP" and flags & 0x02 and not flags & 0x10:
+            guess = fingerprint_syn(ttl, fields["tcp_window"], fields["tcp_mss"],
+                                    fields["tcp_wscale"], options or "", fields["df"])
+            fields["os_guess"] = guess.name
+        return fields
 
     def _mark_suspicious(self, alerts) -> None:
         """Flag the events behind each alert as suspicious"""

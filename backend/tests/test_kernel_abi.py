@@ -38,8 +38,22 @@ def load_kguardctl():
     return module
 
 
+def kguard_dev_module():
+    spec = importlib.util.spec_from_file_location("kguard_dev", ROOT / "kernel" / "tests" / "kguard_dev.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_event_record_layout():
-    assert kguard_device.EVENT.size == 96
+    assert kguard_device.EVENT.size == 128
+    # The header documents the record as a Python struct format; use the same one
+    documented = re.search(r'Python: struct\.Struct\("([^"]+)"\)', HEADER.read_text()).group(1)
+    assert kguard_device.EVENT.format == documented
+    assert kguard_dev_module().EVENT.format == documented
+    assert kguard_device.IPF_DF == define("KGUARD_IPF_DF")
+    letters = {"EOL": "E", "NOP": "N", "MSS": "M", "WS": "W", "SACKOK": "S", "TS": "T"}
+    assert kguard_device.TCP_OPTION_LETTERS == {define(f"KGUARD_TCPOPT_{k}"): v for k, v in letters.items()}
     assert kguard_device.MAGIC == define("KGUARD_MMAP_MAGIC")
     assert kguard_device.ABI_VERSION == define("KGUARD_ABI_VERSION")
     assert {v: k for k, v in kguard_device.DIRECTIONS.items()} == {
@@ -61,12 +75,20 @@ def test_backend_netlink_constants():
     assert kguard_netlink.KGUARD_CMD_ALERT == cmds["KGUARD_CMD_ALERT"]
     assert kguard_netlink.KGUARD_CMD_CONFIG_CHANGED == cmds["KGUARD_CMD_CONFIG_CHANGED"]
     assert kguard_netlink.KGUARD_CMD_BLOCK_ADD == cmds["KGUARD_CMD_BLOCK_ADD"]
-    for name in ("ADDR", "NETNS", "TIMESTAMP", "ALERT_TYPE", "ALERT_ACTION", "ALERT_PORTS", "ALERT_ATTEMPTS"):
+    for name in ("ADDR", "NETNS", "TIMESTAMP", "ALERT_TYPE", "ALERT_ACTION", "ALERT_PORTS", "ALERT_ATTEMPTS",
+                 "SPOOF_REASON", "IFINDEX"):
         assert getattr(kguard_netlink, f"KGUARD_ATTR_{name}") == attrs[f"KGUARD_ATTR_{name}"], name
     types = enum_values("kguard_alert_type")
     assert kguard_netlink.ALERT_TYPES == {
         types["KGUARD_ALERT_SCAN"]: "scan",
         types["KGUARD_ALERT_SYN_RATE"]: "syn_rate",
+        types["KGUARD_ALERT_SPOOF"]: "spoof",
+    }
+    reasons = enum_values("kguard_spoof_reason")
+    assert kguard_netlink.SPOOF_REASONS == {
+        reasons["KGUARD_SPOOF_LOOPBACK"]: "loopback",
+        reasons["KGUARD_SPOOF_LOCAL"]: "local",
+        reasons["KGUARD_SPOOF_MARTIAN"]: "martian",
     }
 
 
@@ -84,5 +106,8 @@ def test_kguardctl_constants():
     for attr_id, (name, _fmt) in ctl.CONFIG.items():
         assert attrs["KGUARD_ATTR_CFG_" + name.upper()] == attr_id, name
     for name in ("ADDR", "PREFIX_LEN", "TIMEOUT", "EXPIRES_MS", "REASON", "NETNS", "TIMESTAMP",
-                 "ALERT_TYPE", "ALERT_ACTION", "ALERT_PORTS", "ALERT_ATTEMPTS", "ALLOW_ENTRY"):
+                 "ALERT_TYPE", "ALERT_ACTION", "ALERT_PORTS", "ALERT_ATTEMPTS", "ALLOW_ENTRY",
+                 "SPOOF_REASON", "IFINDEX"):
         assert getattr(ctl, f"ATTR_{name}") == attrs[f"KGUARD_ATTR_{name}"], name
+    assert ctl.ALERT_TYPES == kguard_netlink.ALERT_TYPES
+    assert ctl.SPOOF_REASONS == kguard_netlink.SPOOF_REASONS

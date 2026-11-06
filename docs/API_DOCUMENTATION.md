@@ -322,6 +322,9 @@ GET /api/alerts/
 - `HIGH_FREQUENCY` - High frequency connections
 - `UNUSUAL_TRAFFIC` - Unusual traffic patterns
 - `UNKNOWN_PROTOCOL` - Unknown protocol usage
+- `SYN_FLOOD` - Half-open connections piling up against one destination
+- `SPOOFED_TRAFFIC` - Forged source addresses (TTL jumps, bogon or martian sources)
+- `AMPLIFICATION` - Reflection attacks: unsolicited large UDP replies, or this host used as a reflector
 
 #### Severity Levels
 

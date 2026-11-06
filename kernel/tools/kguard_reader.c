@@ -60,6 +60,28 @@ static const char *dir_name(uint8_t d)
 	return d < 4 ? names[d] : "?";
 }
 
+/* SYN options in p0f notation, e.g. "M,S,T,N,W" (same as /proc/kguard) */
+static void tcp_options_text(const struct kguard_event *e, char *out, size_t size)
+{
+	unsigned int i, n = e->tcp_opts_len < KGUARD_TCP_MAX_OPTS ? e->tcp_opts_len : KGUARD_TCP_MAX_OPTS;
+	size_t len = 0;
+
+	out[0] = '\0';
+	for (i = 0; i < n && len + 6 < size; i++) {
+		const char *sep = i ? "," : "";
+
+		switch (e->tcp_opts[i]) {
+		case KGUARD_TCPOPT_EOL: len += snprintf(out + len, size - len, "%sE", sep); break;
+		case KGUARD_TCPOPT_NOP: len += snprintf(out + len, size - len, "%sN", sep); break;
+		case KGUARD_TCPOPT_MSS: len += snprintf(out + len, size - len, "%sM", sep); break;
+		case KGUARD_TCPOPT_WS: len += snprintf(out + len, size - len, "%sW", sep); break;
+		case KGUARD_TCPOPT_SACKOK: len += snprintf(out + len, size - len, "%sS", sep); break;
+		case KGUARD_TCPOPT_TS: len += snprintf(out + len, size - len, "%sT", sep); break;
+		default: len += snprintf(out + len, size - len, "%s?%u", sep, e->tcp_opts[i]);
+		}
+	}
+}
+
 static void print_event(const struct kguard_event *e)
 {
 	char src[INET6_ADDRSTRLEN], dst[INET6_ADDRSTRLEN];
@@ -74,6 +96,13 @@ static void print_event(const struct kguard_event *e)
 		printf(" pid=%u comm=%.16s", e->pid, e->comm);
 	if (e->info & KGUARD_EVF_SOCK)
 		printf(" uid=%u ino=%llu", e->uid, (unsigned long long)e->sock_ino);
+	printf(" ttl=%u len=%u", e->ttl, e->ip_len);
+	if (e->tcp_opts_len) {
+		char opts[48];
+
+		tcp_options_text(e, opts, sizeof(opts));
+		printf(" win=%u mss=%u opts=%s", e->tcp_window, e->tcp_mss, opts);
+	}
 	putchar('\n');
 }
 

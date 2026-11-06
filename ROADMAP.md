@@ -168,12 +168,15 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
 - [x] **N5.3 Brute force.** Repeated short connections to SSH, RDP or database ports from one source in a window.
   *Done when:* a `hydra` run against SSH raises a `BRUTE_FORCE` alert.
   *Status:* Done. Repeated new connections to login/database ports (BRUTE_FORCE_PORTS, threshold 10 per window). Verified with 15 rapid connections to port 22 (hydra is not available in the test VM).
-- [ ] **N5.4 Passive OS fingerprinting.** Guess the sender's OS from initial TTL, window size, MSS and TCP option order on SYN packets (p0f-style signatures).
+- [x] **N5.4 Passive OS fingerprinting.** Guess the sender's OS from initial TTL, window size, MSS and TCP option order on SYN packets (p0f-style signatures).
   *Done when:* Linux, Windows and macOS hosts are recognized in the test lab.
-- [ ] **N5.5 Spoofed traffic.** Flag TTL jumps for the same source, bogon/martian sources, and packets arriving on an unexpected interface.
+  *Status:* Done. Event ABI v2 (128 bytes) carries TTL, IP length, DF, TCP window and, for SYNs, MSS, window scale and option order, filled by both the kernel module and the eBPF program (bounded option loop accepted by the verifier). backend/app/services/fingerprint.py matches p0f-style signatures (Linux, Windows, macOS, FreeBSD, OpenBSD) and scanning tools (nmap, masscan, zmap, crafted); events store os_guess and alerts name the sender. Verified in scripts/detection_lab.py: a real Linux SYN (curl) is recognised as Linux; Windows and macOS are recognised from their SYN signatures replayed with scapy (no Windows/macOS machines in the test VM); nmap -sS is named nmap.
+- [x] **N5.5 Spoofed traffic.** Flag TTL jumps for the same source, bogon/martian sources, and packets arriving on an unexpected interface.
   *Done when:* scapy-spoofed packets are flagged.
-- [ ] **N5.6 Amplification attacks.** Detect DNS (ANY), NTP (monlist), memcached and SSDP reflection: large responses to small requests, or unsolicited responses.
+  *Status:* Done. Kernel guard (PRE_ROUTING, before the allowlist): loopback, own-address and martian sources on a real interface raise KGUARD_ALERT_SPOOF with reason and interface, one per reason per 10 s counting packets, dropped when enforcing. Backend: TTL jumps per source (same initial TTL, ignoring scanner-crafted packets and known scanners) and bogon sources aggregated per category. "Unexpected interface" is covered by the kernel check for this host's own addresses. Verified: scapy-forged 127.0.0.1, own-address, multicast, 198.18.0.7 and TTL-shifted packets are flagged (kernel guard tests and detection lab).
+- [x] **N5.6 Amplification attacks.** Detect DNS (ANY), NTP (monlist), memcached and SSDP reflection: large responses to small requests, or unsolicited responses.
   *Done when:* replayed amplification captures raise alerts.
+  *Status:* Done. Victim side: unsolicited (conntrack new/invalid, or no query seen without conntrack) large UDP replies from reflector ports per destination and service; reflector side: this host's UDP service replying with many times the request bytes. Verified with scapy replays of DNS ANY answers (1412 bytes) and NTP monlist pages (468 bytes), and a host service amplifying 39x. memcached and SSDP use the same rule with their ports; not replayed separately.
 - [ ] **N5.7 DNS tunneling.** Parse DNS queries; score long, high-entropy subdomains and unusual record types (TXT, NULL).
   *Done when:* an `iodine` or `dnscat2` session is detected, with a measured false-positive rate on normal browsing.
 - [ ] **N5.8 TLS fingerprinting.** Parse the TLS ClientHello; compute JA3/JA4 and record the requested server name (SNI). Match against a list of known malware fingerprints.

@@ -15,12 +15,18 @@ module's alerts, as in production. Then, from the attacker:
                                                   correctly labelled (N5.1)
   - repeated logins to port 22                 -> BRUTE_FORCE (N5.3)
   - hping3 -S --flood --rand-source            -> SYN_FLOOD (N5.2)
+  - SYNs from Linux (curl), and Windows and macOS
+    SYN signatures replayed with scapy         -> each OS named (N5.4)
+  - scapy-forged loopback, bogon and TTL-shifted
+    sources                                    -> SPOOFED_TRAFFIC (N5.5)
+  - replayed DNS ANY and NTP monlist replies,
+    and this host's UDP service amplifying     -> AMPLIFICATION (N5.6)
 
 Run as root in a disposable VM, from the repository root:
 
     make -C kernel && sudo python3 scripts/detection_lab.py /path/to/backend/python
 
-Needs: nmap, hping3, curl, ip (iproute2).
+Needs: nmap, hping3, curl, ip (iproute2), scapy (for the system python3).
 """
 
 import json
@@ -36,10 +42,13 @@ import urllib.request
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 BACKEND_PY = sys.argv[1] if len(sys.argv) > 1 else "python3"
 HOST, ATTACKER, NS = "10.200.0.1", "10.200.0.2", "kgatk"
+# A second, well-behaved host in the attacker's network (its address gets spoofed)
+NEIGHBOUR = "10.200.0.3"
 PORT = 8790
 API = f"http://127.0.0.1:{PORT}"
 
 results = []
+BACKEND_LOG = None
 
 
 def check(name, ok, detail=""):
@@ -106,6 +115,10 @@ def setup():
     sh(f"ip addr add {HOST}/24 dev kgv0")
     sh("ip link set kgv0 up")
     sh(f"ip netns exec {NS} ip addr add {ATTACKER}/24 dev kgv1")
+    sh(f"ip netns exec {NS} ip addr add {NEIGHBOUR}/24 dev kgv1")
+    # Let forged sources reach the hooks after routing (reverse-path filtering would drop them)
+    for conf in ("all", "default", "kgv0"):
+        sh(f"sysctl -qw net.ipv4.conf.{conf}.rp_filter=0")
     sh(f"ip netns exec {NS} ip link set kgv1 up")
     sh(f"ip netns exec {NS} ip link set lo up")
 
@@ -122,6 +135,8 @@ def start_backend():
     work = tempfile.mkdtemp(prefix="kguard-lab-")
     env = dict(os.environ, DATABASE_URL=f"sqlite:///{work}/kguard.db", DEBUG="true",
                DATA_COLLECTION_INTERVAL="0.5")
+    global BACKEND_LOG
+    BACKEND_LOG = f"{work}/backend.log"
     proc = subprocess.Popen([BACKEND_PY, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1",
                              "--port", str(PORT)],
                             cwd=os.path.join(ROOT, "backend"), env=env,
@@ -166,6 +181,10 @@ def test_scan_types():
         check(f"nmap -{flag} raises a '{label} Scan' alert", found and found[0]["title"].startswith(f"{label} Scan"),
               f"{found[0]['title']} (detected by {source})" if found
               else f"no alert; alerts so far: {[a['title'] for a in alerts()]}")
+        if flag == "sS":
+            meta = (found[0].get("metadata") or {}) if found else {}
+            check("the SYN scan alert names nmap from its TCP fingerprint",
+                  meta.get("sender_fingerprint") == "nmap", meta.get("fingerprints"))
         time.sleep(16)  # let the next scan start a fresh detection window
 
 
@@ -181,11 +200,129 @@ def test_brute_force():
 
 def test_syn_flood():
     in_ns(["timeout", "4", "hping3", "-S", "--flood", "--rand-source", "-p", "8080", HOST])
+    start = time.time()
+    try:
+        api("/api/health/")
+        print(f"      (API answered {time.time() - start:.1f} s after the flood)", flush=True)
+    except OSError as e:
+        print(f"      (API did not answer within 10 s after the flood: {e})", flush=True)
     found = wait_for(lambda: [a for a in alerts() if a["alert_type"] == "SYN_FLOOD"], timeout=60)
     meta = (found[0].get("metadata") or {}) if found else {}
     check("hping3 SYN flood from random sources raises SYN_FLOOD", found,
           f"{found[0]['title']}: {meta.get('half_open')} half-open from {meta.get('distinct_sources')} "
           f"sources, syn_cookies={meta.get('syn_cookies')}" if found else "no alert")
+
+
+def forge(packets, count=1):
+    """Send scapy packets (Python expressions) from the attacker's interface, at layer 2"""
+    mac = open("/sys/class/net/kgv0/address").read().strip()
+    code = ("from scapy.all import *\n"
+            f"pkts = [Ether(dst='{mac}') / p for i in range({count}) for p in [{', '.join(packets)}]]\n"
+            "sendp(pkts, iface='kgv1', verbose=0)\n")
+    r = in_ns([sys.executable, "-c", code])
+    if r.returncode:
+        raise RuntimeError(r.stderr.strip()[-300:])
+
+
+def events_from(ip):
+    return api(f"/api/events/?src_ip={ip}&size=100")["items"]
+
+
+LINUX_OPTS = "[('MSS', 1460), ('SAckOK', b''), ('Timestamp', (1, 0)), ('NOP', None), ('WScale', 7)]"
+SIGNATURES = {
+    "Windows": ("10.200.0.11", "IP(src='10.200.0.11', dst='{h}', ttl=128, flags='DF') / TCP(sport=50001, dport=443, "
+                "flags='S', window=64240, options=[('MSS', 1460), ('NOP', None), ('WScale', 8), ('NOP', None), "
+                "('NOP', None), ('SAckOK', b'')])"),
+    "macOS": ("10.200.0.12", "IP(src='10.200.0.12', dst='{h}', ttl=64, flags='DF') / TCP(sport=50002, dport=443, "
+              "flags='S', window=65535, options=[('MSS', 1460), ('NOP', None), ('WScale', 6), ('NOP', None), "
+              "('NOP', None), ('Timestamp', (123456, 0)), ('SAckOK', b''), ('EOL', None)])"),
+}
+
+
+def test_os_fingerprints():
+    in_ns(["curl", "-s", "-o", "/dev/null", "--max-time", "2", "--interface", NEIGHBOUR, f"http://{HOST}:443/"])
+    for _ip, packet in SIGNATURES.values():
+        forge([packet.format(h=HOST)])
+    for name, ip in (("Linux", NEIGHBOUR), ("Windows", SIGNATURES["Windows"][0]), ("macOS", SIGNATURES["macOS"][0])):
+        found = wait_for(lambda: [e for e in events_from(ip) if e["flags"] == 2 and e.get("os_guess")], timeout=15)
+        e = found[0] if found else {}
+        check(f"{name} SYN recognised as {name}", e.get("os_guess") == name,
+              f"{e.get('os_guess')}: ttl={e.get('ttl')} win={e.get('tcp_window')} opts={e.get('tcp_options')}")
+
+
+def spoof_alerts(**meta):
+    def match():
+        return [a for a in alerts() if a["alert_type"] == "SPOOFED_TRAFFIC"
+                and all((a.get("metadata") or {}).get(k) == v for k, v in meta.items())]
+    return wait_for(match, timeout=20)
+
+
+def test_spoofing():
+    forge([f"IP(src='127.0.0.1', dst='{HOST}') / TCP(dport=443, flags='S')"])
+    found = spoof_alerts(source="kernel", spoof_reason="loopback")
+    check("forged 127.0.0.1 source raises the kernel's spoof alert", found, found[0]["title"] if found else "none")
+
+    forge([f"IP(src='198.18.0.7', dst='{HOST}') / TCP(dport=443, flags='S')"])
+    found = spoof_alerts(bogon_category="benchmarking")
+    check("forged bogon source (198.18.0.7) raises SPOOFED_TRAFFIC", found, found[0]["title"] if found else "none")
+
+    # The neighbour talks normally (0 hops), then someone 19 hops away forges its address
+    for _ in range(5):
+        in_ns(["curl", "-s", "-o", "/dev/null", "--max-time", "2", "--interface", NEIGHBOUR, f"http://{HOST}:443/"])
+    forge([f"IP(src='{NEIGHBOUR}', dst='{HOST}', ttl=45) / TCP(sport=40000 + i, dport=443, flags='S', "
+           f"window=64240, options={LINUX_OPTS})"], count=5)
+    found = spoof_alerts(spoof_reason="ttl_jump")
+    meta = (found[0].get("metadata") or {}) if found else {}
+    check(f"TTL-shifted packets claiming {NEIGHBOUR} raise SPOOFED_TRAFFIC",
+          found and found[0]["src_ip"] == NEIGHBOUR and meta.get("odd_hops") == [19],
+          f"usual {meta.get('usual_hops')} hops, odd {meta.get('odd_hops')}" if found else "none")
+
+
+# Replies as reflectors send them: a DNS ANY answer and NTP monlist (mode 7) pages
+DNS_ANY = ("IP(src=['8.8.8.8', '1.1.1.1'][i % 2], dst='{h}') / UDP(sport=53, dport=40000 + i) / "
+           "DNS(id=i, qr=1, qd=DNSQR(qname='example.com', qtype='ANY'), "
+           "an=" + " / ".join(["DNSRR(rrname='example.com', type='TXT', rdata='v=spf1 ' + 'x' * 240)"] * 5) + ")")
+NTP_MONLIST = ("IP(src='129.6.15.%d' % (28 + i % 3), dst='{h}') / UDP(sport=123, dport=41000 + i) / "
+               "Raw(b'\\x97\\x00\\x03\\x2a\\x00\\x06\\x00\\x48' + bytes(432))")
+
+
+def test_amplification():
+    for service, packet in (("DNS", DNS_ANY), ("NTP", NTP_MONLIST)):
+        forge([packet.format(h=HOST)], count=60)
+
+        def found(service=service):
+            return [a for a in alerts() if a["alert_type"] == "AMPLIFICATION"
+                    and a["title"] == f"{service} Amplification Attack Against {HOST}"]
+        hit = wait_for(found, timeout=20)
+        meta = (hit[0].get("metadata") or {}) if hit else {}
+        check(f"replayed {service} reflection replies raise AMPLIFICATION", hit,
+              f"{meta.get('replies')} replies, {meta.get('bytes')} bytes from {meta.get('reflectors')} reflectors"
+              if hit else [a["title"] for a in alerts()][-5:])
+
+    # This host's own "NTP" service answers 36-byte requests with 1428-byte packets
+    srv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    srv.bind((HOST, 123))
+
+    def serve():
+        while True:
+            try:
+                _data, addr = srv.recvfrom(2048)
+                srv.sendto(bytes(1400), addr)
+            except OSError:
+                return
+
+    threading.Thread(target=serve, daemon=True).start()
+    code = ("import socket, time\ns = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
+            f"for i in range(100):\n    s.sendto(b'\\x17\\x00\\x03\\x2a' + bytes(4), ('{HOST}', 123))\n"
+            "    time.sleep(0.01)\n")
+    in_ns([sys.executable, "-c", code], check=True)
+    hit = wait_for(lambda: [a for a in alerts() if a["alert_type"] == "AMPLIFICATION"
+                            and (a.get("metadata") or {}).get("role") == "reflector"], timeout=20)
+    srv.close()
+    meta = (hit[0].get("metadata") or {}) if hit else {}
+    check("this host amplifying a client's requests raises AMPLIFICATION (reflector)",
+          hit and hit[0]["src_ip"] == ATTACKER,
+          f"{hit[0]['title']}: {meta.get('amplification')}x" if hit else "none")
 
 
 def main():
@@ -201,11 +338,19 @@ def main():
         listener(22)
         listener(8080)
         procs.append(start_backend())
-        for test in (test_web_traffic_is_quiet, test_scan_types, test_brute_force, test_syn_flood):
+        tests = (test_web_traffic_is_quiet, test_scan_types, test_brute_force, test_syn_flood,
+                 test_os_fingerprints, test_spoofing, test_amplification)
+        only = os.environ.get("LAB_TESTS", "").split(",")  # e.g. LAB_TESTS=syn_flood,spoofing
+        for test in tests:
+            if only != [""] and test.__name__.removeprefix("test_") not in only:
+                continue
             try:
                 test()
             except Exception as e:
                 check(f"{test.__name__} ran without errors", False, repr(e)[:200])
+        if any(not ok for _n, ok in results) and BACKEND_LOG:
+            print("--- backend log (last lines) ---")
+            print("".join(open(BACKEND_LOG).readlines()[-25:]))
     finally:
         teardown(procs)
     failed = [n for n, ok in results if not ok]

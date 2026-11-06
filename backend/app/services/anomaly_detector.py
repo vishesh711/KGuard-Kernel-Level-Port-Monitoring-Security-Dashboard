@@ -26,6 +26,12 @@ flood the alert list):
   handshake never completed) to one destination within
   `syn_flood_window_seconds`, whatever their sources, so floods from random
   spoofed addresses are caught.
+- SPOOFED_TRAFFIC: TTL jumps for one source, and bogon sources (spoofing.py).
+- AMPLIFICATION: unsolicited large replies from reflector services, or this
+  host acting as a reflector (amplification.py).
+
+SYN packets carry a TCP fingerprint (fingerprint.py); scan, brute-force and
+flood alerts name the operating system or tool that sent them.
 
 Sources in `trusted_sources` are never alerted on.
 """
@@ -42,7 +48,9 @@ from ..config import settings
 from ..database import SessionLocal
 from ..models.network_event import NetworkEvent
 from ..models.security_alert import AlertSeverity, AlertType, SecurityAlert
+from .amplification import AmplificationDetector
 from .probes import ACK, CONNECTION_PROBES, LABELS, SYN, classify_probe
+from .spoofing import SpoofingDetector
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +71,7 @@ class Probe:
     dst_ip: str
     dst_port: int
     event_id: Optional[int]
+    os_guess: Optional[str] = None  # SYN fingerprint (fingerprint.py)
 
 
 # Kept for callers that still say "Attempt"
@@ -107,17 +116,37 @@ def syn_cookies_enabled() -> Optional[int]:
         return None
 
 
+def sender_fingerprint(guesses) -> Dict[str, Any]:
+    """Alert metadata naming the OS or tool behind a set of SYN fingerprints"""
+    counts = Counter(g for g in guesses if g)
+    if not counts:
+        return {}
+    name, _count = counts.most_common(1)[0]
+    return {"sender_fingerprint": name, "fingerprints": dict(counts.most_common(5))}
+
+
+def fingerprint_text(meta: Dict[str, Any]) -> str:
+    name = meta.get("sender_fingerprint")
+    if not name or name == "unknown":
+        return ""
+    if name == "crafted":
+        return " The SYN packets were hand-crafted (no TCP options), as raw-packet tools do."
+    if name in ("nmap", "masscan", "zmap"):
+        return f" The SYN packets have {name}'s TCP fingerprint."
+    return f" The SYN packets have a {name} TCP fingerprint."
+
+
 class FloodTracker:
     """Half-open TCP connections per destination (host, address, port)"""
 
     def __init__(self, window_seconds: float):
         self.window_seconds = window_seconds
-        # destination -> {(src_ip, src_port): time of SYN}, oldest first
-        self.pending: Dict[tuple, "OrderedDict[tuple, float]"] = {}
+        # destination -> {(src_ip, src_port): (time of SYN, its fingerprint)}, oldest first
+        self.pending: Dict[tuple, "OrderedDict[tuple, tuple]"] = {}
 
-    def syn(self, dest: tuple, src: tuple, t: float) -> None:
+    def syn(self, dest: tuple, src: tuple, t: float, guess: Optional[str] = None) -> None:
         pending = self.pending.setdefault(dest, OrderedDict())
-        pending[src] = t
+        pending[src] = (t, guess)
         pending.move_to_end(src)
         if len(pending) > MAX_PENDING_PER_DESTINATION:
             pending.popitem(last=False)
@@ -133,12 +162,16 @@ class FloodTracker:
         if not pending:
             return 0, 0
         cutoff = now - self.window_seconds
-        while pending and next(iter(pending.values())) < cutoff:
+        while pending and next(iter(pending.values()))[0] < cutoff:
             pending.popitem(last=False)
         return len(pending), len({src for src, _port in pending})
 
+    def fingerprints(self, dest: tuple) -> List[Optional[str]]:
+        return [guess for _t, guess in self.pending.get(dest, {}).values()]
+
     def forget_idle(self, now: float) -> None:
-        idle = [d for d, p in self.pending.items() if not p or max(p.values()) < now - self.window_seconds]
+        idle = [d for d, p in self.pending.items()
+                if not p or next(reversed(p.values()))[0] < now - self.window_seconds]
         for dest in idle:
             del self.pending[dest]
 
@@ -163,6 +196,8 @@ class AnomalyDetectorService:
         # Recent probes per (host, source)
         self.windows: Dict[str, Deque[Probe]] = {}
         self.floods = FloodTracker(float(settings.syn_flood_window_seconds))
+        self.spoofing = SpoofingDetector(self)
+        self.amplification = AmplificationDetector(self)
 
         # True while this server's kernel module reports SYN/UDP scans and
         # SYN-rate abuse itself (see kernel_alerts.py)
@@ -181,6 +216,8 @@ class AnomalyDetectorService:
             "high_frequency_detected": 0,
             "brute_force_detected": 0,
             "syn_floods_detected": 0,
+            "spoofing_detected": 0,
+            "amplification_detected": 0,
             "last_analysis": None,
         }
 
@@ -189,6 +226,10 @@ class AnomalyDetectorService:
         self.windows.clear()
         self.recent_alerts.clear()
         self.floods.pending.clear()
+        self.spoofing.reset()
+        self.amplification.reset()
+
+    event_time = staticmethod(event_time)
 
     def is_trusted(self, ip: str) -> bool:
         if not self.trusted_networks:
@@ -227,7 +268,7 @@ class AnomalyDetectorService:
                 src = (event.src_ip, event.src_port)
                 flags = event.flags or 0
                 if flags & SYN and not flags & ACK:
-                    self.floods.syn(dest, src, t)
+                    self.floods.syn(dest, src, t, getattr(event, "os_guess", None))
                     flood_dests[dest] = host_id
                 elif flags & ACK:
                     self.floods.completed(dest, src)
@@ -237,7 +278,8 @@ class AnomalyDetectorService:
                 continue
             key = source_key(event.src_ip, host_id)
             sources[key] = (event.src_ip, host_id)
-            probe = Probe(time=t, kind=kind, dst_ip=event.dst_ip, dst_port=event.dst_port, event_id=event.id)
+            probe = Probe(time=t, kind=kind, dst_ip=event.dst_ip, dst_port=event.dst_port, event_id=event.id,
+                          os_guess=getattr(event, "os_guess", None))
             batch[key].append(probe)
             self._remember(key, probe)
 
@@ -269,6 +311,9 @@ class AnomalyDetectorService:
                 if alert:
                     alert.host_id = host_id
                     alerts.append(alert)
+
+            alerts.extend(self.spoofing.check(events, self.kernel_detection))
+            alerts.extend(self.amplification.check(events))
         except Exception as e:
             logger.error(f"Error during anomaly analysis: {e}", exc_info=True)
 
@@ -330,7 +375,9 @@ class AnomalyDetectorService:
                 "sample_ports": sorted(ports)[:50],
                 "window_seconds": round(span, 3),
                 "detection_method": "sliding_window_distinct_ports",
+                **sender_fingerprint(p.os_guess for p in probes),
             }
+            alert.description += fingerprint_text(alert.alert_metadata)
             self._start_cooldown(cooldown)
             # Also silences per-port SUSPICIOUS_PORT alerts for this scanner
             self._start_cooldown(f"port_scan_{key}")
@@ -406,12 +453,14 @@ class AnomalyDetectorService:
                 dst_port=port,
                 related_event_ids=self._event_ids(attempts),
                 alert_metadata={
+                    **sender_fingerprint(a.os_guess for a in attempts),
                     "connections": len(attempts),
                     "window_seconds": round(span, 3),
                     "threshold": self.brute_force_threshold,
                     "detection_method": "repeated_connections_to_login_port",
                 },
             ))
+            alerts[-1].description += fingerprint_text(alerts[-1].alert_metadata)
             self._start_cooldown(cooldown)
             self.stats["brute_force_detected"] += 1
             logger.warning(f"Possible brute force from {src_ip} on port {port}: {len(attempts)} connections")
@@ -433,6 +482,7 @@ class AnomalyDetectorService:
             2: " SYN cookies are always on.",
         }.get(cookies, "")
         window = self.floods.window_seconds
+        meta = sender_fingerprint(self.floods.fingerprints(dest))
         self._start_cooldown(cooldown)
         self.stats["syn_floods_detected"] += 1
         logger.warning(f"SYN flood against {dst_ip}:{dst_port}: {half_open} half-open from {sources} sources")
@@ -444,6 +494,7 @@ class AnomalyDetectorService:
             description=(
                 f"{half_open} connections to {dst_ip}:{dst_port} were opened but never completed in the "
                 f"last {window:.0f} seconds, from {sources} different source addresses.{cookie_text}"
+                f"{fingerprint_text(meta)}"
             ),
             src_ip=None,
             dst_ip=dst_ip,
@@ -454,6 +505,7 @@ class AnomalyDetectorService:
                 "window_seconds": window,
                 "syn_cookies": cookies,
                 "detection_method": "half_open_per_destination",
+                **meta,
             },
         )
 

@@ -103,6 +103,32 @@ PORT_SCAN_THRESHOLD=10
 ALERT_COOLDOWN_SECONDS=300
 ```
 
+## Detection rules
+
+Every rule works per host (this server, or each agent) and per source, with
+a cooldown (`ALERT_COOLDOWN_SECONDS`) so one attacker does not flood the
+alert list. Sources in `TRUSTED_SOURCES` (CIDRs) are never alerted on.
+
+| Alert | What triggers it | Settings |
+|---|---|---|
+| `PORT_SCAN` | One probe type (SYN, UDP, FIN, NULL, Xmas, ACK, Maimon) to many ports; the title names the scan type | `PORT_SCAN_THRESHOLD`, `DETECTION_WINDOW_SECONDS` |
+| `BRUTE_FORCE` | Repeated new connections to one login/database port | `BRUTE_FORCE_PORTS`, `BRUTE_FORCE_THRESHOLD` |
+| `SUSPICIOUS_PORT` | A connection attempt to a listed port | `SUSPICIOUS_PORTS` |
+| `HIGH_FREQUENCY` | Too many connection attempts per minute from one source | `HIGH_FREQUENCY_THRESHOLD` |
+| `SYN_FLOOD` | Half-open connections to one destination, whatever their sources | `SYN_FLOOD_THRESHOLD`, `SYN_FLOOD_WINDOW_SECONDS` |
+| `UNUSUAL_TRAFFIC` | Connection attempts to a port far above its learned (EWMA) baseline | `BASELINE_*` |
+| `SPOOFED_TRAFFIC` | A source's hop count (from the TTL) jumps; bogon sources (documentation, benchmarking, reserved ranges, ...); from the kernel module: loopback, own-address and martian sources on a real interface | `TTL_JUMP_HOPS`, `TTL_JUMP_PACKETS`, `BOGON_DETECTION` |
+| `AMPLIFICATION` | Unsolicited large UDP replies from reflector ports (DNS, NTP, memcached, SSDP, CLDAP, chargen, ...); or this host's UDP service sending a client many times the bytes it received | `AMPLIFICATION_MIN_BYTES`, `AMPLIFICATION_THRESHOLD`, `AMPLIFICATION_WINDOW_SECONDS`, `REFLECTOR_RATIO`, `REFLECTOR_MIN_BYTES` |
+
+When this server's kernel module reports SYN/UDP scans, SYN-rate abuse and
+spoofed sources itself, the backend leaves those to it.
+
+**TCP fingerprints.** Every SYN gets a p0f-style guess of the sender's
+operating system or scanning tool (`os_guess` on events: Linux, Windows,
+macOS, FreeBSD, OpenBSD, nmap, masscan, zmap, or `crafted` for hand-made
+packets) from its initial TTL, window, MSS and TCP option order
+(`app/services/fingerprint.py`). Scan, brute-force and flood alerts name it.
+
 ## Testing
 
 ```bash

@@ -140,6 +140,41 @@ static void kguard_show_addr(struct seq_file *m, const char *key,
 		seq_printf(m, "\"%s\": \"%pI4\", ", key, addr);
 }
 
+/* SYN options in p0f order notation, e.g. "M,N,W,N,N,T,S" */
+static void kguard_show_tcp_options(struct seq_file *m, const struct kguard_event *e)
+{
+	unsigned int i, n = min_t(unsigned int, e->tcp_opts_len, KGUARD_TCP_MAX_OPTS);
+
+	seq_puts(m, "\"tcp_options\": \"");
+	for (i = 0; i < n; i++) {
+		if (i)
+			seq_putc(m, ',');
+		switch (e->tcp_opts[i]) {
+		case KGUARD_TCPOPT_EOL:
+			seq_putc(m, 'E');
+			break;
+		case KGUARD_TCPOPT_NOP:
+			seq_putc(m, 'N');
+			break;
+		case KGUARD_TCPOPT_MSS:
+			seq_putc(m, 'M');
+			break;
+		case KGUARD_TCPOPT_WS:
+			seq_putc(m, 'W');
+			break;
+		case KGUARD_TCPOPT_SACKOK:
+			seq_putc(m, 'S');
+			break;
+		case KGUARD_TCPOPT_TS:
+			seq_putc(m, 'T');
+			break;
+		default:
+			seq_printf(m, "?%u", e->tcp_opts[i]);
+		}
+	}
+	seq_puts(m, "\", ");
+}
+
 static int kguard_seq_show(struct seq_file *m, void *v)
 {
 	struct kguard_snapshot *snap = m->private;
@@ -175,6 +210,12 @@ static int kguard_seq_show(struct seq_file *m, void *v)
 	seq_printf(m, "\"direction\": \"%s\", \"ct_state\": \"%s\", \"netns\": %u, \"ifindex\": %u, ",
 		   kguard_direction_name(e->direction), kguard_ct_name(e->ct_state),
 		   e->netns, e->ifindex);
+	seq_printf(m, "\"ttl\": %u, \"ip_len\": %u, \"df\": %s, \"tcp_window\": %u, ",
+		   e->ttl, e->ip_len, e->ip_flags & KGUARD_IPF_DF ? "true" : "false",
+		   e->tcp_window);
+	seq_printf(m, "\"tcp_mss\": %u, \"tcp_wscale\": %d, ", e->tcp_mss,
+		   e->tcp_opts_len && e->tcp_wscale != 0xff ? e->tcp_wscale : -1);
+	kguard_show_tcp_options(m, e);
 	seq_printf(m, "\"pid\": %d, \"comm\": \"%s\", \"uid\": %lld, \"sock_ino\": %llu}",
 		   proc ? (int)e->pid : -1, comm,
 		   sock ? (long long)e->uid : -1LL, sock ? e->sock_ino : 0);

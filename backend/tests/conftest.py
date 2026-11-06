@@ -108,6 +108,9 @@ def clean_state():
         for table in reversed(Base.metadata.sorted_tables):
             conn.execute(table.delete())
     anomaly_detector.reset()
+    # Tests use documentation addresses (RFC 5737) as stand-ins for real sources;
+    # the bogon rule's own tests turn it back on
+    anomaly_detector.spoofing.check_bogons = False
     anomaly_detector.kernel_detection = False
     from app.services.kernel_alerts import kernel_alerts
     kernel_alerts.reset()

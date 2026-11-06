@@ -37,6 +37,7 @@
 #include <net/netfilter/nf_socket.h>
 #include <net/netns/generic.h>
 #include <net/sock.h>
+#include <net/tcp.h>
 #include "kguard_trace.h"
 
 static bool conntrack = true;
@@ -81,6 +82,10 @@ static int kguard_parse_ipv4(struct sk_buff *skb, struct kguard_event *ev)
 	memcpy(ev->src_addr, &iph->saddr, sizeof(iph->saddr));
 	memcpy(ev->dst_addr, &iph->daddr, sizeof(iph->daddr));
 	ev->protocol = iph->protocol;
+	ev->ttl = iph->ttl;
+	ev->ip_len = ntohs(iph->tot_len);
+	if (iph->frag_off & htons(IP_DF))
+		ev->ip_flags |= KGUARD_IPF_DF;
 
 	/* Only the first fragment carries the transport header */
 	if (ntohs(iph->frag_off) & IP_OFFSET) {
@@ -100,6 +105,8 @@ static int kguard_parse_ipv6(struct sk_buff *skb, struct kguard_event *ev)
 	ev->family = AF_INET6;
 	memcpy(ev->src_addr, &ip6h->saddr, sizeof(ip6h->saddr));
 	memcpy(ev->dst_addr, &ip6h->daddr, sizeof(ip6h->daddr));
+	ev->ttl = ip6h->hop_limit;
+	ev->ip_len = ntohs(ip6h->payload_len) + sizeof(*ip6h);
 
 	/* Walk extension headers to the upper-layer protocol */
 	offset = ipv6_skip_exthdr(skb, skb_network_offset(skb) + sizeof(*ip6h),
@@ -112,6 +119,49 @@ static int kguard_parse_ipv6(struct sk_buff *skb, struct kguard_event *ev)
 		return -1;
 	}
 	return offset;
+}
+
+/*
+ * Record the TCP options of a SYN: their order, MSS and window scale. The
+ * order and values identify the sender's operating system (p0f-style).
+ */
+static void kguard_parse_tcp_options(const struct sk_buff *skb, int offset,
+				     const struct tcphdr *th, struct kguard_event *ev)
+{
+	u8 buf[MAX_TCP_OPTION_SPACE];
+	unsigned int len = th->doff * 4 - sizeof(*th);
+	const u8 *opt;
+	unsigned int i = 0;
+
+	ev->tcp_wscale = 0xff;
+	if (th->doff * 4 < sizeof(*th) || !len || len > sizeof(buf))
+		return;
+	opt = skb_header_pointer(skb, offset + sizeof(*th), len, buf);
+	if (!opt)
+		return;
+
+	while (i < len && ev->tcp_opts_len < KGUARD_TCP_MAX_OPTS) {
+		u8 kind = opt[i];
+		u8 size;
+
+		ev->tcp_opts[ev->tcp_opts_len++] = kind;
+		if (kind == TCPOPT_EOL)
+			break;
+		if (kind == TCPOPT_NOP) {
+			i++;
+			continue;
+		}
+		if (i + 1 >= len)
+			break;
+		size = opt[i + 1];
+		if (size < 2 || i + size > len)
+			break;	/* malformed: keep what we have */
+		if (kind == TCPOPT_MSS && size == TCPOLEN_MSS)
+			ev->tcp_mss = (opt[i + 2] << 8) | opt[i + 3];
+		else if (kind == TCPOPT_WINDOW && size == TCPOLEN_WINDOW)
+			ev->tcp_wscale = opt[i + 2];
+		i += size;
+	}
 }
 
 /* Copy ports and TCP flags out of possibly non-linear packet data */
@@ -133,6 +183,9 @@ static void kguard_parse_ports(const struct sk_buff *skb, int offset,
 				(th->psh ? KGUARD_TCP_PSH : 0) |
 				(th->ack ? KGUARD_TCP_ACK : 0) |
 				(th->urg ? KGUARD_TCP_URG : 0);
+		ev->tcp_window = ntohs(th->window);
+		if (th->syn)
+			kguard_parse_tcp_options(skb, offset, th, ev);
 	} else if (ev->protocol == IPPROTO_UDP) {
 		struct udphdr buf;
 		const struct udphdr *uh;

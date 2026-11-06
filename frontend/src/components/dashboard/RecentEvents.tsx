@@ -54,6 +54,14 @@ export function RecentEvents({ events }: RecentEventsProps) {
                         {event.pid != null && ` (${event.pid})`}
                       </span>
                     )}
+                    {event.os_guess && event.os_guess !== 'unknown' && (
+                      <span
+                        className="mr-2"
+                        title={`TCP fingerprint: ${event.tcp_options || 'no options'}, TTL ${event.ttl ?? '?'}`}
+                      >
+                        {event.os_guess}
+                      </span>
+                    )}
                     {formatDistanceToNow(parseServerDate(event.created_at), { addSuffix: true })}
                   </p>
                 </div>

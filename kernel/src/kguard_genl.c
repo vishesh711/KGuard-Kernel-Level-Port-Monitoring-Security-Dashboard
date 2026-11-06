@@ -89,6 +89,7 @@ static int kguard_put_stats(struct sk_buff *msg)
 	    kguard_put_u64(msg, KGUARD_ATTR_STAT_BLOCK_DROPS, t.block_drops) ||
 	    kguard_put_u64(msg, KGUARD_ATTR_STAT_RATE_DROPS, t.rate_drops) ||
 	    kguard_put_u64(msg, KGUARD_ATTR_STAT_WOULD_DROP, t.would_drop) ||
+	    kguard_put_u64(msg, KGUARD_ATTR_STAT_SPOOFED, t.spoofed) ||
 	    kguard_put_u64(msg, KGUARD_ATTR_STAT_BLOCKS, t.blocks))
 		return -EMSGSIZE;
 	return 0;
@@ -344,7 +345,10 @@ void kguard_genl_alert(const struct kguard_alert *a)
 	    nla_put_u8(msg, KGUARD_ATTR_ALERT_TYPE, a->type) ||
 	    nla_put_u8(msg, KGUARD_ATTR_ALERT_ACTION, a->action) ||
 	    nla_put_u32(msg, KGUARD_ATTR_ALERT_PORTS, a->ports) ||
-	    nla_put_u32(msg, KGUARD_ATTR_ALERT_ATTEMPTS, a->attempts)) {
+	    nla_put_u32(msg, KGUARD_ATTR_ALERT_ATTEMPTS, a->attempts) ||
+	    (a->type == KGUARD_ALERT_SPOOF &&
+	     (nla_put_u8(msg, KGUARD_ATTR_SPOOF_REASON, a->spoof_reason) ||
+	      nla_put_u32(msg, KGUARD_ATTR_IFINDEX, a->ifindex)))) {
 		nlmsg_free(msg);
 		return;
 	}

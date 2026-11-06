@@ -79,6 +79,23 @@ class Settings(BaseSettings):
     # Half-open connections to one destination that make a SYN flood
     syn_flood_threshold: int = 200
     syn_flood_window_seconds: int = 10
+    # Spoofing (SPOOFED_TRAFFIC): packets from one source whose hop count
+    # (from the TTL) jumps by at least ttl_jump_hops, at least ttl_jump_packets times
+    ttl_jump_hops: int = 5
+    ttl_jump_packets: int = 3
+    # Report sources in bogon ranges (documentation, benchmarking, reserved, ...);
+    # turn off for labs that use those ranges internally
+    bogon_detection: bool = True
+    # Amplification (AMPLIFICATION): UDP replies from reflector ports
+    # (DNS, NTP, memcached, SSDP, ...) of at least amplification_min_bytes
+    amplification_min_bytes: int = 400
+    # Unsolicited replies to one destination within the window
+    amplification_threshold: int = 50
+    amplification_window_seconds: int = 10
+    # This host as a reflector: reply bytes to one client at least this many
+    # times the request bytes, and at least reflector_min_bytes in the window
+    reflector_ratio: float = 10.0
+    reflector_min_bytes: int = 100_000
     # Traffic baseline (UNUSUAL_TRAFFIC): per host and port, per interval
     baseline_interval_seconds: int = 60
     baseline_alpha: float = 0.1

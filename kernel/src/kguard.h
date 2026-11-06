@@ -78,6 +78,7 @@ struct kguard_stats {
 	u64 block_drops;
 	u64 rate_drops;
 	u64 would_drop;
+	u64 spoofed;
 };
 
 DECLARE_PER_CPU(struct kguard_stats, kguard_pcpu_stats);
@@ -96,6 +97,7 @@ struct kguard_stats_total {
 	u64 block_drops;
 	u64 rate_drops;
 	u64 would_drop;
+	u64 spoofed;
 	u64 blocks;
 };
 
@@ -154,8 +156,10 @@ struct kguard_alert {
 	u32 netns;
 	u32 ports;
 	u32 attempts;
+	u32 ifindex;	/* arrival interface (SPOOF alerts) */
 	u8 type;	/* enum kguard_alert_type */
 	u8 action;	/* enum kguard_alert_action */
+	u8 spoof_reason;	/* enum kguard_spoof_reason (SPOOF alerts) */
 };
 
 struct net;

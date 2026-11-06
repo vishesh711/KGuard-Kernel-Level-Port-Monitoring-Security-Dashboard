@@ -23,7 +23,7 @@ from ..config import settings
 from ..database import SessionLocal
 from ..models.network_event import NetworkEvent
 from ..models.security_alert import AlertSeverity, AlertType, SecurityAlert
-from .anomaly_detector import anomaly_detector
+from .anomaly_detector import anomaly_detector, fingerprint_text, sender_fingerprint
 from .kguard_netlink import KGuardEventSocket
 from .probes import CONNECTION_PROBES, LABELS, classify_probe
 from .websocket_manager import broadcast_security_alert
@@ -31,11 +31,18 @@ from .websocket_manager import broadcast_security_alert
 logger = logging.getLogger(__name__)
 
 RETRY_SECONDS = 10.0
-# How far back to look at a source's events to name the scan type
-SCAN_LOOKBACK_SECONDS = 15
+# How far before a kernel scan alert to look at the source's events to name
+# the scan type and the scanner (the module's default scan window)
+SCAN_LOOKBACK_SECONDS = 5
 # Events from an alerted source within this many seconds are marked suspicious
 FLAG_SECONDS = 60
 MAX_RELATED_EVENT_IDS = 100
+
+SPOOF_TEXT = {
+    "loopback": "a loopback address (127.0.0.0/8 or ::1), which never arrives from a network",
+    "local": "one of this host's own addresses, which only this host can send from",
+    "martian": "an address no host can send from (multicast, broadcast or 0.0.0.0/8)",
+}
 
 ACTION_TEXT = {
     "blocked": "The kernel blocked this source automatically.",
@@ -56,6 +63,15 @@ def alert_from_kernel(event: Dict[str, Any]) -> SecurityAlert:
         title = f"Port Scan Detected from {ip}"
         what = (f"The kernel saw {ip} try {event['ports']} different ports "
                 f"({event['attempts']} connection attempts) within its scan window.")
+    elif event["type"] == "spoof":
+        alert_type = AlertType.SPOOFED_TRAFFIC
+        severity = AlertSeverity.HIGH
+        title = f"Spoofed Packets Claiming {ip}"
+        reason = event.get("spoof_reason", "unknown")
+        count = event["attempts"]
+        what = (f"{count} packet{'s' if count != 1 else ''} arrived on interface {event.get('ifindex', '?')} "
+                f"claiming to come from {SPOOF_TEXT.get(reason, 'an impossible source')} "
+                f"({ip}{' and others' if count > 1 else ''}), so the source address was forged.")
     else:
         alert_type = AlertType.HIGH_FREQUENCY
         severity = AlertSeverity.HIGH if acted else AlertSeverity.MEDIUM
@@ -78,6 +94,8 @@ def alert_from_kernel(event: Dict[str, Any]) -> SecurityAlert:
             "attempts": event["attempts"],
             "netns": event["netns"],
             "kernel_timestamp": event["timestamp"],
+            **({"spoof_reason": event.get("spoof_reason"), "ifindex": event.get("ifindex")}
+               if event["type"] == "spoof" else {}),
         },
     )
 
@@ -155,9 +173,9 @@ class KernelAlertService:
         event_type = alert.alert_type.value.lower()
         ip = event["src_ip"]
         if event["type"] == "scan":
-            # A fast scan can end before the collector has stored its events;
-            # wait for them so the scan type can be named
-            await self._wait_for_events(ip)
+            # The alert can arrive before the collector has stored the scan's
+            # events; wait for them so the scan type and scanner can be named
+            await self._wait_for_events(ip, event["timestamp"])
         db = SessionLocal()
         try:
             # Link and mark the source's recent events (kernel alerts carry no event IDs)
@@ -166,7 +184,7 @@ class KernelAlertService:
                    .filter(NetworkEvent.src_ip == ip, NetworkEvent.created_at >= since)
                    .order_by(NetworkEvent.id.desc()).limit(MAX_RELATED_EVENT_IDS)]
             if event["type"] == "scan":
-                self._label_scan(db, alert, ip)
+                self._label_scan(db, alert, ip, event["timestamp"])
             if ids:
                 db.execute(update(NetworkEvent).where(NetworkEvent.id.in_(ids))
                            .values(is_suspicious=True, event_type=event_type))
@@ -189,14 +207,14 @@ class KernelAlertService:
         return alert
 
     @staticmethod
-    async def _wait_for_events(ip: str, timeout: float = 3.0) -> None:
-        since = datetime.utcnow() - timedelta(seconds=SCAN_LOOKBACK_SECONDS)
+    async def _wait_for_events(ip: str, alert_ns: int, timeout: float = 3.0) -> None:
+        """Wait until this server's events from ip up to the alert's time (kernel clock) are stored"""
         deadline = time.monotonic() + timeout
         while True:
             db = SessionLocal()
             try:
                 found = db.query(NetworkEvent.id).filter(
-                    NetworkEvent.src_ip == ip, NetworkEvent.created_at >= since,
+                    NetworkEvent.src_ip == ip, NetworkEvent.timestamp >= alert_ns,
                     NetworkEvent.host_id.is_(None)).first()
             finally:
                 db.close()
@@ -205,26 +223,29 @@ class KernelAlertService:
             await asyncio.sleep(0.25)
 
     @staticmethod
-    def _label_scan(db, alert: SecurityAlert, ip: str) -> None:
-        """Name the scan type (the kernel counts SYN and UDP probes) from the source's recent events"""
-        since = datetime.utcnow() - timedelta(seconds=SCAN_LOOKBACK_SECONDS)
+    def _label_scan(db, alert: SecurityAlert, ip: str, alert_ns: int) -> None:
+        """Name the scan type (the kernel counts SYN and UDP probes) and scanner from the source's events"""
+        since = alert_ns - SCAN_LOOKBACK_SECONDS * 10**9
         rows = (db.query(NetworkEvent.protocol, NetworkEvent.flags, NetworkEvent.ct_state,
-                         NetworkEvent.dst_port, NetworkEvent.direction)
-                .filter(NetworkEvent.src_ip == ip, NetworkEvent.created_at >= since,
+                         NetworkEvent.dst_port, NetworkEvent.direction, NetworkEvent.os_guess)
+                .filter(NetworkEvent.src_ip == ip, NetworkEvent.timestamp >= since,
                         NetworkEvent.host_id.is_(None))
                 .limit(20000).all())
         ports: Dict[str, set] = {}
-        for protocol, flags, ct_state, dst_port, direction in rows:
+        guesses = []
+        for protocol, flags, ct_state, dst_port, direction, os_guess in rows:
             if direction == "out":
                 continue
             kind = classify_probe(protocol, flags, ct_state, dst_port)
             if kind in CONNECTION_PROBES:
                 ports.setdefault(kind, set()).add(dst_port)
+                guesses.append(os_guess)
         if not ports:
             return
         kind = max(ports, key=lambda k: len(ports[k]))
         alert.title = f"{LABELS[kind]} Scan Detected from {ip}"
-        alert.alert_metadata = {**alert.alert_metadata, "scan_type": kind}
+        alert.alert_metadata = {**alert.alert_metadata, "scan_type": kind, **sender_fingerprint(guesses)}
+        alert.description += fingerprint_text(alert.alert_metadata)
 
     def reset(self) -> None:
         self._flagged.clear()

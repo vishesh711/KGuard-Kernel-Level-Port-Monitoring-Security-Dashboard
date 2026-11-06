@@ -8,7 +8,7 @@ binary, two capture engines:
 | `module` | The KGuard kernel module (`kernel/`), read zero-copy from `/dev/kguard` | Connection-tracking state; in-kernel scan/SYN-flood detection and blocking |
 | `ebpf` | eBPF: XDP on ingress, TC (clsact) on egress, tracing programs for process ownership | No module to build per kernel; XDP blocklist drops before the network stack |
 
-Both produce the same 96-byte event record (`kernel/include/uapi/linux/kguard.h`),
+Both produce the same 128-byte event record (`kernel/include/uapi/linux/kguard.h`),
 so the backend treats them alike.
 
 ## How it works

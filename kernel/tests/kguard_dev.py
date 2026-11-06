@@ -13,10 +13,10 @@ import select
 import socket
 import struct
 
-EVENT = struct.Struct("<QQ16s16sHHBBBBBB2xIIII16s4x")
+EVENT = struct.Struct("<QQ16s16sHHBBBBBB2xIIII16sHHHBB8sBB2x16x")
 INFO = struct.Struct("<IIIIIIQQQ")
 MAGIC = 0x4452474B
-ABI_VERSION = 1
+ABI_VERSION = 2
 
 TAIL_OFFSET = 64
 DROPPED_OFFSET = 128
@@ -28,11 +28,13 @@ CT_STATES = {0: "none", 1: "new", 2: "established", 3: "related", 4: "invalid", 
 EVF_FRAGMENT = 0x01
 EVF_PROC = 0x02
 EVF_SOCK = 0x04
+OPTION_LETTERS = {0: "E", 1: "N", 2: "M", 3: "W", 4: "S", 8: "T"}
 
 
 def decode(raw):
     (ts, ino, src, dst, sport, dport, family, proto, flags, direction, ct, info,
-     netns, pid, uid, ifindex, comm) = EVENT.unpack(raw)
+     netns, pid, uid, ifindex, comm, ip_len, window, mss, ttl, wscale, opts, nopts,
+     ip_flags) = EVENT.unpack(raw)
     af = socket.AF_INET6 if family == 10 else socket.AF_INET
     size = 16 if af == socket.AF_INET6 else 4
     return {
@@ -53,6 +55,13 @@ def decode(raw):
         "uid": uid if info & EVF_SOCK else -1,
         "sock_ino": ino if info & EVF_SOCK else 0,
         "fragment": bool(info & EVF_FRAGMENT),
+        "ttl": ttl,
+        "ip_len": ip_len,
+        "df": bool(ip_flags & 1),
+        "tcp_window": window,
+        "tcp_mss": mss,
+        "tcp_wscale": wscale if nopts and wscale != 0xFF else -1,
+        "tcp_options": ",".join(OPTION_LETTERS.get(k, f"?{k}") for k in opts[:min(nopts, 8)]),
     }
 
 

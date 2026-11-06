@@ -78,6 +78,7 @@ STATS = {
     19: "rate_drops",
     20: "would_drop",
     21: "blocks",
+    43: "spoofed",
 }
 CONFIG = {  # attribute id: (name, struct format)
     9: ("capture_in", "B"),
@@ -108,8 +109,11 @@ ATTR_ALERT_ACTION = 37
 ATTR_ALERT_PORTS = 38
 ATTR_ALERT_ATTEMPTS = 39
 ATTR_ALLOW_ENTRY = 40
+ATTR_SPOOF_REASON = 41
+ATTR_IFINDEX = 42
 
-ALERT_TYPES = {1: "scan", 2: "syn_rate"}
+ALERT_TYPES = {1: "scan", 2: "syn_rate", 3: "spoof"}
+SPOOF_REASONS = {1: "loopback", 2: "local", 3: "martian"}
 ALERT_ACTIONS = {0: "none", 1: "dropped", 2: "blocked"}
 BLOCK_REASONS = {1: "manual", 2: "scan", 3: "syn_rate"}
 
@@ -246,6 +250,8 @@ def decode_alert(payload):
         "ports": u(a[ATTR_ALERT_PORTS], "I"),
         "attempts": u(a[ATTR_ALERT_ATTEMPTS], "I"),
         "timestamp": u(a[ATTR_TIMESTAMP], "Q"),
+        **({"spoof_reason": SPOOF_REASONS.get(u(a[ATTR_SPOOF_REASON], "B"), "unknown"),
+            "ifindex": u(a[ATTR_IFINDEX], "I")} if ATTR_SPOOF_REASON in a else {}),
     }
 
 
