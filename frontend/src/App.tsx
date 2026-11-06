@@ -5,6 +5,7 @@ import { Events } from './pages/Events'
 import { Alerts } from './pages/Alerts'
 import { Analytics } from './pages/Analytics'
 import { Settings } from './pages/Settings'
+import { Hosts } from './pages/Hosts'
 
 function App() {
   return (
@@ -14,6 +15,7 @@ function App() {
         <Route path="/events" element={<Events />} />
         <Route path="/alerts" element={<Alerts />} />
         <Route path="/analytics" element={<Analytics />} />
+        <Route path="/hosts" element={<Hosts />} />
         <Route path="/settings" element={<Settings />} />
       </Routes>
     </Layout>

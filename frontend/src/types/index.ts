@@ -22,6 +22,23 @@ export interface NetworkEvent {
   process_name?: string | null
   uid?: number | null
   sock_ino?: number | null
+  host_id?: number | null
+}
+
+/** A remote host running kguard-agent */
+export interface AgentInfo {
+  id: number
+  name: string
+  hostname: string | null
+  engine: 'module' | 'ebpf' | null
+  version: string | null
+  online: boolean
+  last_seen: string | null
+  created_at: string | null
+  remote_addr: string | null
+  events_received: number
+  kernel_dropped: number
+  queue_dropped: number
 }
 
 export interface SecurityAlert {
@@ -43,6 +60,7 @@ export interface SecurityAlert {
   resolved: boolean
   resolved_at?: string
   resolution_notes?: string
+  host_id?: number | null
 }
 
 export type AlertType =

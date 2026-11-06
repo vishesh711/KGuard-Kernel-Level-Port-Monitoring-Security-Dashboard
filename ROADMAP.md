@@ -138,16 +138,21 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
 
 ## Phase 4 — eBPF / XDP engine and agent
 
-- [ ] **X4.1 eBPF capture.** XDP program for incoming packets and TC program for outgoing, written with libbpf and CO-RE (BTF); events go to a `BPF_MAP_TYPE_RINGBUF`.
+- [x] **X4.1 eBPF capture.** XDP program for incoming packets and TC program for outgoing, written with libbpf and CO-RE (BTF); events go to a `BPF_MAP_TYPE_RINGBUF`.
   *Done when:* the same event format as K2.5 comes out of the eBPF path.
-- [ ] **X4.2 eBPF process tracking.** Probes on `tcp_v4_connect`, `inet_csk_accept` and the `sock:inet_sock_set_state` tracepoint, mapping connections to PID and command.
+  *Status:* Done. agent/bpf/kguard.bpf.c: XDP ingress + TC clsact egress, BPF ring buffer of the same 96-byte struct kguard_event, CO-RE with partial preserve_access_index structs (no vmlinux.h). Verified on 6.8: 10,000/10,000 packets each way, nothing lost.
+- [x] **X4.2 eBPF process tracking.** Probes on `tcp_v4_connect`, `inet_csk_accept` and the `sock:inet_sock_set_state` tracepoint, mapping connections to PID and command.
   *Done when:* matches the K2.7 output for the same test.
-- [ ] **X4.3 XDP blocklist.** `BPF_MAP_TYPE_LPM_TRIE` of blocked CIDRs; return `XDP_DROP`.
+  *Status:* Done. fentry tcp_connect, fexit inet_csk_accept (via bpf_get_func_ret, signature-independent), fexit inet_listen/inet_bind/inet6_bind, fentry udp_sendmsg, tp_btf inet_sock_set_state; existing listeners seeded from /proc/net at start-up. Verified: curl, nc listeners started before and after the agent, first UDP datagram.
+- [x] **X4.3 XDP blocklist.** `BPF_MAP_TYPE_LPM_TRIE` of blocked CIDRs; return `XDP_DROP`.
   *Done when:* blocked traffic is dropped before the kernel's network stack.
-- [ ] **X4.4 Agent.** One user-space program (Go with cilium/ebpf, or C with libbpf) that loads either engine (C module or eBPF), reads events, batches them and streams them to the backend over gRPC or HTTPS. Handles reconnects and backpressure.
+  *Status:* Done. LPM trie (IPv4 stored IPv4-mapped) pinned in bpffs, XDP_DROP with per-entry drop counters and expiry; kguard-agent block/unblock/blocks. Verified against an attacker namespace: IPv4 prefix, IPv6, expiry.
+- [x] **X4.4 Agent.** One user-space program (Go with cilium/ebpf, or C with libbpf) that loads either engine (C module or eBPF), reads events, batches them and streams them to the backend over gRPC or HTTPS. Handles reconnects and backpressure.
   *Done when:* `kguard-agent --engine=module|ebpf` both feed the same backend.
-- [ ] **X4.5 Multi-server.** Agent identity (host ID plus token); backend stores which host each event came from.
+  *Status:* Done in C (libbpf + libcurl), not Go/gRPC: one binary, --engine=module|ebpf, bounded queue with drop counting, HTTPS JSON batches with retry/backoff. Verified: both engines, and 1,000/1,000 events delivered across a backend restart.
+- [x] **X4.5 Multi-server.** Agent identity (host ID plus token); backend stores which host each event came from.
   *Done when:* two VMs show up separately in the dashboard.
+  *Status:* Done. Enrollment with a shared key, per-agent tokens (SHA-256 stored), host_id on events and alerts, per-host detection, Hosts page. Verified: two agents (module and eBPF, separate network namespaces) shown as two hosts; scan alert attributed to the scanned host. Two separate VMs not tested.
 
 ## Phase 5 — Deep network detection
 
