@@ -153,6 +153,37 @@ macOS, FreeBSD, OpenBSD, nmap, masscan, zmap, or `crafted` for hand-made
 packets) from its initial TTL, window, MSS and TCP option order
 (`app/services/fingerprint.py`). Scan, brute-force and flood alerts name it.
 
+## Flow export (IPFIX)
+
+Set `IPFIX_COLLECTORS='["collector.example:4739"]'` and the backend groups
+every host's packet events into flows and exports them over IPFIX
+(RFC 7011, UDP) to any collector: nfcapd/nfdump, Wireshark, pmacct,
+ntopng, Elastic. Each flow carries addresses, ports, protocol, packets,
+bytes (IP length), start and end in milliseconds, TCP flags, direction,
+interface and why it ended (FIN/RST, `IPFIX_IDLE_TIMEOUT`, or
+`IPFIX_ACTIVE_TIMEOUT` for long flows). Each agent, and each network
+namespace on this server, is its own observation domain, so a packet seen
+leaving a container and arriving on the host is not counted twice
+(`app/services/flow_export.py`).
+
+## Packet capture on alert
+
+With `PCAP_ON_ALERT=true` (root or CAP_NET_RAW) the backend keeps the last
+`PCAP_SECONDS` of this server's traffic in memory and saves the packets of
+each alert of `PCAP_MIN_SEVERITY` (default HIGH) or above, from before and
+after the alert, as `PCAP_DIR/alert-<id>.pcap`; download it from
+`GET /api/alerts/{id}/pcap`. The kernel does the heavy lifting: an
+AF_PACKET `TPACKET_V3` ring mapped into the backend (whole blocks handed
+over, no system call per packet) and a one-instruction classic BPF socket
+filter that cuts each packet to `PCAP_SNAPLEN` bytes before it is copied
+(`app/services/packet_capture.py`). Off by default: it records traffic.
+
+`scripts/flow_pcap_lab.py` checks both in a VM (10 checks): nfdump stores
+the exported flows, whose packet and byte counts equal tcpdump's for the
+same connection; Wireshark decodes the messages; an nmap scan blocked by the
+kernel gets a pcap of exactly the scanner's packets, including those before
+the alert.
+
 ## Testing
 
 ```bash

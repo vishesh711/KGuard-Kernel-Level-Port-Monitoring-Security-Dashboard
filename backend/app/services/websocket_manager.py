@@ -415,7 +415,10 @@ async def broadcast_network_event(event_data: dict):
 
 
 async def broadcast_security_alert(alert_data: dict):
-    """Broadcast a new security alert to all connected clients"""
+    """Announce a new security alert: to connected dashboards, and to the packet capture"""
+    from .packet_capture import packet_capture  # imported here: it imports the database layer
+
+    packet_capture.on_alert(alert_data)
     message = WebSocketMessage(
         type="security_alert",
         data=alert_data

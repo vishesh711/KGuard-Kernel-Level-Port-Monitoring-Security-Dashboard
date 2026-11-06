@@ -18,6 +18,9 @@ from ..database import check_db_connection, get_db
 from ..schemas.common import HealthCheck
 from ..services.anomaly_detector import anomaly_detector
 from ..services.data_collector import data_collector
+from ..services.flow_export import flow_exporter
+from ..services.packet_capture import packet_capture
+from ..services.payloads import payload_service
 
 router = APIRouter(prefix="/api/health", tags=["health"])
 
@@ -93,7 +96,10 @@ async def detailed_health_check(db: Session = Depends(get_db)):
             },
             "services": {
                 "data_collector": collector_stats,
-                "anomaly_detector": detector_stats
+                "anomaly_detector": detector_stats,
+                "flow_export": flow_exporter.get_stats(),
+                "payloads": payload_service.get_stats(),
+                "packet_capture": packet_capture.get_stats(),
             },
             "kernel_module": kernel_status,
             "configuration": {

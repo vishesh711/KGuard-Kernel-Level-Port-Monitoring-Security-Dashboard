@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from sqlalchemy import and_, desc, func
 from sqlalchemy.orm import Session
 
@@ -15,6 +16,7 @@ from ..database import get_db
 from ..models.security_alert import AlertSeverity, AlertType, SecurityAlert
 from ..schemas.common import PaginatedResponse, SuccessResponse
 from ..schemas.security_alert import AlertAcknowledge, AlertResolve, AlertStats, SecurityAlertResponse
+from ..services.packet_capture import packet_capture
 from .buckets import bucket_expr, fill_series
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
@@ -88,6 +90,15 @@ async def get_alert(alert_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Alert not found")
 
     return SecurityAlertResponse.model_validate(alert)
+
+
+@router.get("/{alert_id}/pcap")
+async def get_alert_pcap(alert_id: int):
+    """The packets saved for an alert (packet capture on alert), as a pcap file"""
+    path = packet_capture.path_for(alert_id)
+    if not path:
+        raise HTTPException(status_code=404, detail="No packet capture for this alert")
+    return FileResponse(path, media_type="application/vnd.tcpdump.pcap", filename=path.name)
 
 
 @router.post("/{alert_id}/acknowledge", response_model=SuccessResponse)
