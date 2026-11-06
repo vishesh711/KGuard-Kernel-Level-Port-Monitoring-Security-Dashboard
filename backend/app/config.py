@@ -88,7 +88,8 @@ class Settings(BaseSettings):
     bogon_detection: bool = True
     # Amplification (AMPLIFICATION): UDP replies from reflector ports
     # (DNS, NTP, memcached, SSDP, ...) of at least amplification_min_bytes
-    amplification_min_bytes: int = 400
+    # (200: SSDP answers are typically 250-350 bytes; only unsolicited replies count)
+    amplification_min_bytes: int = 200
     # Unsolicited replies to one destination within the window
     amplification_threshold: int = 50
     amplification_window_seconds: int = 10

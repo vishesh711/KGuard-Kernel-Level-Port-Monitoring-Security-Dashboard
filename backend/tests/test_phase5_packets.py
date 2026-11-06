@@ -252,6 +252,14 @@ def test_unsolicited_dns_replies_are_amplification(fake_device, collect, db):
     assert (meta["role"], meta["replies"], meta["reflectors"], meta["bytes"]) == ("victim", 60, 4, 84000)
 
 
+def test_typical_ssdp_replies_are_large_enough(fake_device, collect, db):
+    """Real SSDP answers are ~250-350 bytes; a reflection flood of them must count"""
+    build_fake_device(fake_device, [[dns_reply(i, src_port=1900, ip_len=310) for i in range(60)]])
+    collect()
+    (alert,) = alerts(db, AlertType.AMPLIFICATION)
+    assert alert.title == "SSDP Amplification Attack Against 10.0.0.1"
+
+
 def test_each_reflector_service_is_reported(fake_device, collect, db):
     build_fake_device(fake_device, [[dns_reply(i) for i in range(60)]
                                     + [dns_reply(i, src_port=123, ip_len=468) for i in range(60)]])

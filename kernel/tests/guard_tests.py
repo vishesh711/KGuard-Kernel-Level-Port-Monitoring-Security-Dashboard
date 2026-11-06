@@ -260,13 +260,13 @@ def test_auto_block():
 
 
 def spoofed_udp(count):
-    """Send UDP from count different spoofed sources in 10.201.0.0/16"""
+    """Send UDP from count different spoofed sources (10.64.0.1 upwards, avoiding the lab's 10.200/16)"""
     code = f"""
 import socket, struct
 raw = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
 dst = socket.inet_aton("{HOST4}")
 for i in range({count}):
-    src = socket.inet_aton(f"10.201.{{i // 250}}.{{i % 250 + 1}}")
+    src = struct.pack("!I", (10 << 24) + (64 << 16) + i + 1)
     udp = struct.pack("!HHHH", 30000, 9999, 9, 0) + b"x"
     ip = struct.pack("!BBHHHBBH4s4s", 0x45, 0, 20 + len(udp), 0, 0, 64, 17, 0, src, dst)
     raw.sendto(ip + udp, ("{HOST4}", 0))
@@ -355,6 +355,23 @@ def test_source_table_cap():
     h.unload()
     log = h.sh("dmesg")
     h.check("no slab objects left behind at unload", "still has objects" not in log and "kguard_src" not in log)
+
+    # One million distinct sources with the default cap (65,536)
+    h.load()
+    with Lab():
+        start = time.monotonic()
+        spoofed_udp(1_000_000)
+        seconds = time.monotonic() - start
+        st = h.debugfs_stats()
+        objects = slab_objects()
+        size = next((int(line.split()[3]) for line in open("/proc/slabinfo")
+                     if line.startswith("kguard_src ")), 0)
+        h.check("1,000,000 spoofed sources: table stays at the default cap of 65,536",
+                st["sources"] <= 65536 and st["sources"] + st["track_full"] >= 1_000_000 * 0.99,
+                f"sources={st['sources']} not_tracked={st['track_full']} in {seconds:.0f} s")
+        h.check("memory stays bounded (kguard_src slab)", objects <= 65536 * 1.05,
+                f"{objects} objects x {size} bytes = {objects * size / 2**20:.1f} MiB")
+    h.unload()
 
 
 def run_all():
