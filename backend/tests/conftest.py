@@ -114,6 +114,9 @@ def clean_state():
     anomaly_detector.kernel_detection = False
     from app.services.kernel_alerts import kernel_alerts
     kernel_alerts.reset()
+    from app.services.payloads import payload_service
+    payload_service.reset()
+    payload_service.blocklist = {}
     from app.services.baseline import traffic_baseline
     traffic_baseline.reset()
     data_collector.close_device()

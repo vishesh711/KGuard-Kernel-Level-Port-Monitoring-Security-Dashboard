@@ -82,6 +82,8 @@ export type AlertType =
   | 'SYN_FLOOD'
   | 'SPOOFED_TRAFFIC'
   | 'AMPLIFICATION'
+  | 'DNS_TUNNELING'
+  | 'MALICIOUS_TLS'
 
 export type AlertSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
 
@@ -192,4 +194,38 @@ export interface ChartDataPoint {
 export interface TimeSeriesData {
   timestamp: string
   [key: string]: string | number
+}
+
+/** A TLS ClientHello seen by an eBPF agent, with its client fingerprints */
+export interface TlsHandshake {
+  id: number
+  timestamp: number
+  host_id: number | null
+  client_ip: string
+  client_port: number
+  server_ip: string
+  server_port: number
+  direction: 'in' | 'out' | null
+  sni: string | null
+  alpn: string | null
+  tls_version: string | null
+  ja3: string
+  ja4: string
+  known_bad: string | null
+  process_name: string | null
+}
+
+/** A DNS lookup seen by an eBPF agent */
+export interface DnsQuery {
+  id: number
+  timestamp: number
+  host_id: number | null
+  client_ip: string
+  server_ip: string
+  qname: string
+  qtype_name: string | null
+  domain: string | null
+  subdomain_length: number | null
+  entropy: number | null
+  process_name: string | null
 }

@@ -23,6 +23,7 @@
 volatile int agent_stop;
 
 static struct queue *queue;
+static struct strqueue *payload_queue;
 static const struct engine *engine;
 
 void agent_log(const char *level, const char *fmt, ...)
@@ -50,6 +51,18 @@ static void push_event(const struct kguard_event *ev, void *ctx)
 	queue_push(ctx, ev);
 }
 
+static void push_payload(const struct kguard_payload *p, void *ctx)
+{
+	struct buf b;
+
+	buf_init(&b);
+	json_payload(&b, p);
+	if (b.data)
+		strqueue_push(ctx, b.data);	/* the queue now owns the string */
+	else
+		buf_free(&b);
+}
+
 static void *reader_thread(void *arg)
 {
 	(void)arg;
@@ -71,7 +84,7 @@ static void usage(void)
 		"  kguard-agent run --engine module|ebpf (--server URL | --stdout)\n"
 		"                   [--state-dir DIR] [--token TOKEN] [--iface lo,eth0]\n"
 		"                   [--xdp-native] [--batch N] [--flush-ms N] [--queue N]\n"
-		"                   [--ringbuf-mb N]\n"
+		"                   [--ringbuf-mb N] [--no-payloads]\n"
 		"  kguard-agent block PREFIX [--timeout SECONDS]   (eBPF engine)\n"
 		"  kguard-agent unblock PREFIX\n"
 		"  kguard-agent blocks\n");
@@ -101,6 +114,7 @@ int main(int argc, char **argv)
 		{ "flush-ms", required_argument, NULL, 'f' },
 		{ "queue", required_argument, NULL, 'q' },
 		{ "ringbuf-mb", required_argument, NULL, 'r' },
+		{ "no-payloads", no_argument, NULL, 'P' },
 		{ "timeout", required_argument, NULL, 't' },
 		{ "help", no_argument, NULL, 'h' },
 		{ 0 },
@@ -127,6 +141,7 @@ int main(int argc, char **argv)
 		case 'i': cfg.ifaces = optarg; break;
 		case 'x': cfg.xdp_native = true; break;
 		case 'o': cfg.stdout_mode = true; break;
+		case 'P': cfg.no_payloads = true; break;
 		case 'b': cfg.batch_size = strtoul(optarg, NULL, 10); break;
 		case 'f': cfg.flush_ms = strtoul(optarg, NULL, 10); break;
 		case 'q': cfg.queue_capacity = strtoul(optarg, NULL, 10); break;
@@ -191,6 +206,11 @@ int main(int argc, char **argv)
 	signal(SIGPIPE, SIG_IGN);
 
 	queue = queue_new(cfg.queue_capacity);
+	payload_queue = strqueue_new(4096);
+	if (!payload_queue)
+		return 1;
+	if (engine->set_payload_cb)
+		engine->set_payload_cb(push_payload, payload_queue);
 	if (!queue || engine->open(&cfg)) {
 		if (engine)
 			engine->close();
@@ -200,13 +220,14 @@ int main(int argc, char **argv)
 		 cfg.stdout_mode ? "printing to stdout" : cfg.server);
 
 	pthread_create(&reader, NULL, reader_thread, NULL);
-	ret = sender_run(&cfg, queue, engine);
+	ret = sender_run(&cfg, queue, payload_queue, engine);
 	agent_stop = 1;
 	pthread_join(reader, NULL);
 
 	log_info("kernel dropped %llu events", (unsigned long long)engine->kernel_dropped());
 	engine->close();
 	queue_free(queue);
+	strqueue_free(payload_queue);
 	curl_global_cleanup();
 	return ret ? 1 : 0;
 }

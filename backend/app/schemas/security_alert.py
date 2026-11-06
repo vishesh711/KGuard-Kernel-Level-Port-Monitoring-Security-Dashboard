@@ -30,6 +30,8 @@ class AlertTypeEnum(str, Enum):
     SYN_FLOOD = "SYN_FLOOD"
     SPOOFED_TRAFFIC = "SPOOFED_TRAFFIC"
     AMPLIFICATION = "AMPLIFICATION"
+    DNS_TUNNELING = "DNS_TUNNELING"
+    MALICIOUS_TLS = "MALICIOUS_TLS"
 
 
 class SecurityAlertBase(BaseModel):

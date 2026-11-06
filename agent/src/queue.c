@@ -115,3 +115,92 @@ void queue_wake(struct queue *q)
 	pthread_cond_broadcast(&q->ready);
 	pthread_mutex_unlock(&q->lock);
 }
+
+/* ---- payload samples: JSON strings, dropped (and counted) when full ---- */
+
+struct strqueue {
+	pthread_mutex_t lock;
+	char **items;
+	size_t capacity;
+	size_t head;
+	size_t count;
+	uint64_t dropped;
+};
+
+struct strqueue *strqueue_new(size_t capacity)
+{
+	struct strqueue *q = calloc(1, sizeof(*q));
+
+	if (!q)
+		return NULL;
+	q->items = calloc(capacity, sizeof(*q->items));
+	if (!q->items) {
+		free(q);
+		return NULL;
+	}
+	q->capacity = capacity;
+	pthread_mutex_init(&q->lock, NULL);
+	return q;
+}
+
+void strqueue_free(struct strqueue *q)
+{
+	if (!q)
+		return;
+	while (q->count) {
+		free(q->items[q->head]);
+		q->head = (q->head + 1) % q->capacity;
+		q->count--;
+	}
+	pthread_mutex_destroy(&q->lock);
+	free(q->items);
+	free(q);
+}
+
+void strqueue_push(struct strqueue *q, char *json)
+{
+	pthread_mutex_lock(&q->lock);
+	if (q->count == q->capacity) {
+		q->dropped++;
+		free(json);
+	} else {
+		q->items[(q->head + q->count) % q->capacity] = json;
+		q->count++;
+	}
+	pthread_mutex_unlock(&q->lock);
+}
+
+/* Take up to max strings without waiting; the caller frees them */
+size_t strqueue_pop(struct strqueue *q, char **out, size_t max)
+{
+	size_t n = 0;
+
+	pthread_mutex_lock(&q->lock);
+	while (q->count && n < max) {
+		out[n++] = q->items[q->head];
+		q->head = (q->head + 1) % q->capacity;
+		q->count--;
+	}
+	pthread_mutex_unlock(&q->lock);
+	return n;
+}
+
+size_t strqueue_length(struct strqueue *q)
+{
+	size_t n;
+
+	pthread_mutex_lock(&q->lock);
+	n = q->count;
+	pthread_mutex_unlock(&q->lock);
+	return n;
+}
+
+uint64_t strqueue_dropped(struct strqueue *q)
+{
+	uint64_t d;
+
+	pthread_mutex_lock(&q->lock);
+	d = q->dropped;
+	pthread_mutex_unlock(&q->lock);
+	return d;
+}

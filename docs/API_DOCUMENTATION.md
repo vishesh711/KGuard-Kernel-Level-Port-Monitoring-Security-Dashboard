@@ -325,6 +325,8 @@ GET /api/alerts/
 - `SYN_FLOOD` - Half-open connections piling up against one destination
 - `SPOOFED_TRAFFIC` - Forged source addresses (TTL jumps, bogon or martian sources)
 - `AMPLIFICATION` - Reflection attacks: unsolicited large UDP replies, or this host used as a reflector
+- `DNS_TUNNELING` - Data hidden in DNS lookups (iodine, dnscat2, exfiltration)
+- `MALICIOUS_TLS` - A TLS client fingerprint (JA3/JA4) on the blocklist
 
 #### Severity Levels
 

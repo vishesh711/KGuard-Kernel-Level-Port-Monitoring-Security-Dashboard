@@ -23,6 +23,7 @@ KGuard is a comprehensive, production-ready kernel-level network security monito
 - **Scan Classification**: Names nmap scan types (SYN, UDP, FIN, NULL, Xmas, ACK, Maimon) and, from TCP fingerprints, the scanning tool
 - **Passive OS Fingerprinting**: Recognises Linux, Windows and macOS senders from TTL, window, MSS and TCP option order
 - **Spoofing, SYN Flood and Amplification Detection**: TTL jumps, bogon/martian sources (also in the kernel), half-open floods, DNS/NTP/memcached reflection
+- **TLS Client Fingerprints and DNS Tunnelling**: the eBPF agent samples DNS messages and TLS ClientHellos; the backend records JA3/JA4 and SNI per process and detects DNS tunnels (iodine)
 - **Real-time Alerting**: Immediate notifications for critical security events
 - **Alert Management**: Acknowledgment and resolution workflows for security incidents
 

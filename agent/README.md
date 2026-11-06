@@ -48,12 +48,24 @@ skeleton:
   kernel's BTF, so one build runs on many kernels. Return values are read
   with `bpf_get_func_ret()` so signature changes (like `inet_csk_accept()`
   in 6.10) do not break loading.
+- **Payload samples** (`payloads` ring buffer, separate so 1.6 KB records
+  cannot crowd out events): DNS messages (UDP port 53) and TLS
+  ClientHellos, recognised by their first bytes (handshake record, type 1)
+  on any port. A ClientHello longer than its first segment is followed
+  through the flow in an LRU map until the record is complete; one larger
+  than a record (loopback's 64 KB MTU, or a segmentation-offload
+  super-packet at TC egress) is copied in chunks. Each sample carries its
+  TCP sequence number and the local process. The backend reassembles,
+  parses and fingerprints them (JA3, JA4, SNI; DNS tunnelling). Turn off
+  with `--no-payloads`.
+- Process names are the process's (thread-group leader's), not the calling
+  thread's: Chrome connects from a thread called `Chrome_IOThread`.
 - Timestamps use the monotonic clock in BPF and are converted to wall-clock
   time by the agent.
 
 Differences from the module engine: no conntrack state, no in-kernel scan
 detection (the backend detects scans for eBPF hosts), and IPv6 extension
-headers are not walked.
+headers are not walked. Only the eBPF engine sends payload samples.
 
 ### Module engine
 
@@ -116,7 +128,7 @@ IPv4 is stored IPv4-mapped, so one trie holds both families.
 
 ## Testing
 
-`tests/agent_tests.py` runs against a real kernel (29 checks): eBPF capture
+`tests/agent_tests.py` runs against a real kernel (31 checks): eBPF capture
 of every packet in and out, process attribution (curl, `nc` listeners
 started before and after the agent, first UDP datagram), IPv6, the XDP
 blocklist against an attacker namespace (IPv4 prefix, IPv6, expiry), the
@@ -130,3 +142,11 @@ sudo python3 agent/tests/agent_tests.py /path/to/backend/venv/bin/python
 
 Run it in a throwaway VM (see `kernel/tests/run_in_vm.sh` for a virtme-ng
 setup).
+
+`scripts/payload_lab.py` checks payload analysis end to end (14 checks):
+curl, Python requests and headless Chromium connect over TLS through an
+agent; each ClientHello must be recorded with the client process and a
+JA3/JA4 equal to Wireshark's on a tcpdump capture of the same traffic
+(Chromium both as one offloaded packet and split across TCP segments), and
+a real `iodine` DNS tunnel must raise `DNS_TUNNELING` while ordinary
+lookups raise nothing.

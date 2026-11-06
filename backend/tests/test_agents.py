@@ -61,7 +61,7 @@ def test_ingest_stores_events_for_the_agent(client, enrollment, db):
     agent = enroll(client, "web-1").json()
     events = [make_event(src_port=40000 + i, flags=TCP_ACK) for i in range(10)] + [{"bogus": True}]
     response = send(client, agent["token"], events, kernel_dropped=3, queue_dropped=1)
-    assert response.json() == {"accepted": 10, "rejected": 1}
+    assert response.json() == {"accepted": 10, "rejected": 1, "payloads_accepted": 0}
 
     assert {r.host_id for r in db.query(NetworkEvent).all()} == {agent["agent_id"]}
     listed = client.get("/api/agents/").json()

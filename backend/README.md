@@ -120,8 +120,32 @@ alert list. Sources in `TRUSTED_SOURCES` (CIDRs) are never alerted on.
 | `SPOOFED_TRAFFIC` | A source's hop count (from the TTL) jumps; bogon sources (documentation, benchmarking, reserved ranges, ...); from the kernel module: loopback, own-address and martian sources on a real interface | `TTL_JUMP_HOPS`, `TTL_JUMP_PACKETS`, `BOGON_DETECTION` |
 | `AMPLIFICATION` | Unsolicited large UDP replies from reflector ports (DNS, NTP, memcached, SSDP, CLDAP, chargen, ...); or this host's UDP service sending a client many times the bytes it received | `AMPLIFICATION_MIN_BYTES`, `AMPLIFICATION_THRESHOLD`, `AMPLIFICATION_WINDOW_SECONDS`, `REFLECTOR_RATIO`, `REFLECTOR_MIN_BYTES` |
 
+| `DNS_TUNNELING` | Many never-repeated, long, random-looking names under one domain from one client, often TXT/NULL records (eBPF agents' DNS samples; `app/services/dns_tunnel.py`) | `DNS_TUNNEL_WINDOW_SECONDS`, `DNS_TUNNEL_MIN_QUERIES`, `DNS_TUNNEL_SCORE`, `DNS_TUNNEL_ALLOWLIST` |
+| `MALICIOUS_TLS` | A TLS client fingerprint (JA3 or JA4) on the blocklist | `TLS_FINGERPRINT_BLOCKLIST` (CSV: fingerprint, label...; abuse.ch SSLBL format works) |
+
 When this server's kernel module reports SYN/UDP scans, SYN-rate abuse and
 spoofed sources itself, the backend leaves those to it.
+
+**DNS and TLS** (from eBPF agents' payload samples, `app/services/payloads.py`):
+every DNS lookup and TLS ClientHello is stored with the process that made
+it. ClientHellos get JA3 and JA4 client fingerprints and their server name
+(`app/services/tls_parser.py`). Our JA3 and JA4 match Wireshark's on real
+curl, Python and Chromium handshakes (`tests/fixtures/tls`), except that
+JA4 ignores GREASE signature algorithms as its specification says, so
+Chromium's JA4 stays the same across connections. API:
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/tls/fingerprints` | Per JA4: handshakes, JA3s, server names, processes, clients |
+| `GET /api/tls/handshakes?ja4=&ja3=&sni=` | Recent ClientHellos |
+| `GET /api/dns/domains?minutes=60` | Per registered domain: lookups, distinct names, tunnel score |
+| `GET /api/dns/queries?domain=&client_ip=` | Recent lookups |
+
+`scripts/dns_fp_eval.py` measures DNS tunnelling false positives on real
+hostnames (500 top sites, about 6,000 third-party hosts from Ghostery's
+tracker database): no alert in 36,000 lookups of a simulated 8-hour browsing
+session, nor when every hostname is looked up within 10 minutes (the closest
+domain, cloudfront.net, scored 0.31 against a threshold of 0.6).
 
 **TCP fingerprints.** Every SYN gets a p0f-style guess of the sender's
 operating system or scanning tool (`os_guess` on events: Linux, Windows,

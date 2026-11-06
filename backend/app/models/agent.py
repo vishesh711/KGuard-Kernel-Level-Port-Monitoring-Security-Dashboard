@@ -32,6 +32,8 @@ class Agent(Base):
     kernel_dropped = Column(BigInteger, default=0, nullable=False,
                             comment="Lost in the host's kernel buffers")
     queue_dropped = Column(BigInteger, default=0, nullable=False, comment="Lost in the agent's queue")
+    payload_dropped = Column(BigInteger, default=0, nullable=True,
+                             comment="DNS/TLS payload samples lost in the agent's queue")
 
     def is_online(self, now: datetime = None) -> bool:
         if not self.last_seen:
@@ -54,4 +56,5 @@ class Agent(Base):
             "events_received": self.events_received or 0,
             "kernel_dropped": self.kernel_dropped or 0,
             "queue_dropped": self.queue_dropped or 0,
+            "payload_dropped": self.payload_dropped or 0,
         }

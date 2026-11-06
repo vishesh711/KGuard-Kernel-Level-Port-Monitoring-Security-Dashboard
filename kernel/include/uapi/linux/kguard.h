@@ -138,6 +138,41 @@ struct kguard_event {
 	__u64	__pad2[2];
 };
 
+/*
+ * Application payload sample (eBPF engine): the start of a DNS message or a
+ * TLS ClientHello, for protocol analysis in user space. A ClientHello that
+ * spans several TCP segments arrives as several records; tcp_seq orders them.
+ * The header is 88 bytes, then data[] (only len bytes of it are meaningful).
+ */
+#define KGUARD_PAYLOAD_MAX	1536
+
+enum kguard_payload_kind {
+	KGUARD_PAYLOAD_DNS	= 1,	/* UDP to or from port 53 */
+	KGUARD_PAYLOAD_TLS	= 2,	/* TLS ClientHello (or its continuation) */
+};
+
+struct kguard_payload {
+	__u64	timestamp_ns;
+	__u8	src_addr[16];
+	__u8	dst_addr[16];
+	__u16	src_port;
+	__u16	dst_port;
+	__u8	family;
+	__u8	protocol;
+	__u8	direction;	/* enum kguard_direction */
+	__u8	kind;		/* enum kguard_payload_kind */
+	__u32	netns;
+	__u32	ifindex;
+	__u32	tcp_seq;	/* sequence number of data[0] (TCP) */
+	__u32	pid;		/* local process (KGUARD_EVF_PROC) */
+	__u16	len;		/* bytes captured in data */
+	__u16	orig_len;	/* payload bytes in the packet */
+	__u8	info;		/* KGUARD_EVF_PROC */
+	__u8	__pad[3];
+	char	comm[16];
+	__u8	data[KGUARD_PAYLOAD_MAX];
+};
+
 /* Page 0 of the mmap area */
 struct kguard_mmap_info {
 	__u32	magic;			/* KGUARD_MMAP_MAGIC */

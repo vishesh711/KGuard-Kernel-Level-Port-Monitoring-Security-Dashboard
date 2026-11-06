@@ -6,6 +6,9 @@
  *   engine (kernel module via /dev/kguard, or eBPF via libbpf)
  *       -> reader thread -> bounded queue -> sender thread -> HTTPS backend
  *
+ * DNS messages and TLS ClientHellos (eBPF engine) travel separately as
+ * ready-made JSON in a small payload queue, sent alongside the events.
+ *
  * The queue is the backpressure point: when the backend is slow or down,
  * the sender keeps retrying the same batch with backoff while the queue
  * fills; once full, new events are dropped and counted (and the count is
@@ -29,6 +32,7 @@ struct agent_config {
 	const char *ifaces;		/* ebpf: comma-separated interfaces, NULL = all */
 	bool xdp_native;		/* ebpf: native XDP instead of generic (skb) */
 	bool stdout_mode;		/* print JSON lines instead of sending */
+	bool no_payloads;		/* ebpf: do not sample DNS / TLS ClientHello payloads */
 	unsigned int batch_size;
 	unsigned int flush_ms;
 	unsigned int queue_capacity;
@@ -53,8 +57,18 @@ uint64_t queue_dropped(struct queue *q);
 size_t queue_length(struct queue *q);
 void queue_wake(struct queue *q);
 
+/* queue.c: bounded FIFO of JSON strings (payload samples); takes ownership */
+struct strqueue;
+struct strqueue *strqueue_new(size_t capacity);
+void strqueue_free(struct strqueue *q);
+void strqueue_push(struct strqueue *q, char *json);
+size_t strqueue_pop(struct strqueue *q, char **out, size_t max);
+size_t strqueue_length(struct strqueue *q);
+uint64_t strqueue_dropped(struct strqueue *q);
+
 /* engines: each delivers events through a callback */
 typedef void (*event_cb)(const struct kguard_event *ev, void *ctx);
+typedef void (*payload_cb)(const struct kguard_payload *p, void *ctx);
 
 struct engine {
 	const char *name;
@@ -63,6 +77,8 @@ struct engine {
 	int (*poll)(int timeout_ms, event_cb cb, void *ctx);
 	uint64_t (*kernel_dropped)(void);
 	void (*close)(void);
+	/* Optional: where payload samples go (called before open) */
+	void (*set_payload_cb)(payload_cb cb, void *ctx);
 };
 
 extern const struct engine module_engine;
@@ -87,10 +103,12 @@ void buf_init(struct buf *b);
 void buf_free(struct buf *b);
 void buf_printf(struct buf *b, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 void json_event(struct buf *b, const struct kguard_event *ev);
+void json_payload(struct buf *b, const struct kguard_payload *p);
 
 /* sender.c */
 int sender_enroll(const char *server, const char *key, const char *name, const char *state_dir);
 char *sender_load_token(const char *state_dir);
-int sender_run(const struct agent_config *cfg, struct queue *q, const struct engine *eng);
+int sender_run(const struct agent_config *cfg, struct queue *q, struct strqueue *pq,
+	       const struct engine *eng);
 
 #endif

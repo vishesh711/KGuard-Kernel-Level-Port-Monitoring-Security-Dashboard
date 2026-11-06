@@ -1,0 +1,59 @@
+{
+  "source": "Captured on Linux 6.8 (VM) with tcpdump; expected values from Wireshark/tshark 4.2.2. Clients: curl 8.5 (OpenSSL 3), Python requests 2.34, headless Chromium (Playwright build 1243). Wireshark 4.2.2 keeps GREASE values in the JA4 signature-algorithm list; the JA4 spec ignores them, so wireshark_ja4 differs from ours only in the last part for Chromium.",
+  "cases": [
+    {
+      "name": "curl",
+      "file": "curl.bin",
+      "wireshark_ja3": "0149f47eabf9a20d0893e2a44e5a6323",
+      "wireshark_ja3_string": "771,4866-4867-4865-49196-49200-159-52393-52392-52394-49195-49199-158-49188-49192-107-49187-49191-103-49162-49172-57-49161-49171-51-157-156-61-60-53-47-255,0-11-10-16-22-23-49-13-43-45-51-21,29-23-30-25-24-256-257-258-259-260,0-1-2",
+      "wireshark_ja4": "t13d3112h2_e8f1e7e78f70_b26ce05bbdd6",
+      "sni": "test.lab",
+      "alpn": "h2"
+    },
+    {
+      "name": "python-requests",
+      "file": "python-requests.bin",
+      "wireshark_ja3": "a48c0d5f95b1ef98f560f324fd275da1",
+      "wireshark_ja3_string": "771,4866-4867-4865-49196-49200-49195-49199-52393-52392-49188-49192-49187-49191-159-158-107-103-255,0-11-10-16-22-23-49-13-43-45-51-21,29-23-30-25-24-256-257-258-259-260,0-1-2",
+      "wireshark_ja4": "t13d1812h1_85036bcba153_b26ce05bbdd6",
+      "sni": "test.lab",
+      "alpn": "http/1.1"
+    },
+    {
+      "name": "chrome-1",
+      "file": "chrome-1.bin",
+      "wireshark_ja3": "169a49799e69fce79ba8d0c1d8518bcb",
+      "wireshark_ja3_string": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,45-10-0-13-16-17613-4832-65281-51-5-18-11-27-35-51764-23-43,4588-29-23-24,0",
+      "wireshark_ja4": "t13d1517h2_8daaf6152771_b28e9f1d92a8",
+      "sni": "test.lab",
+      "alpn": "h2"
+    },
+    {
+      "name": "chrome-1-resumed",
+      "file": "chrome-1-resumed.bin",
+      "wireshark_ja3": "aa988989b76898b2ece2d28ece018fc6",
+      "wireshark_ja3_string": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,4832-18-65281-0-16-5-27-35-17613-11-51-13-45-43-10-23-51764-41,4588-29-23-24,0",
+      "wireshark_ja4": "t13d1518h2_8daaf6152771_0c85791d0a6d",
+      "sni": "test.lab",
+      "alpn": "h2"
+    },
+    {
+      "name": "chrome-2",
+      "file": "chrome-2.bin",
+      "wireshark_ja3": "68c30befa99fa976eedfc01f87a8228f",
+      "wireshark_ja3_string": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,23-0-35-51-43-5-17613-65281-51764-27-11-45-4832-16-10-13-18,4588-29-23-24,0",
+      "wireshark_ja4": "t13d1517h2_8daaf6152771_28bb1b54aeb9",
+      "sni": "test.lab",
+      "alpn": "h2"
+    },
+    {
+      "name": "chrome-2-resumed",
+      "file": "chrome-2-resumed.bin",
+      "wireshark_ja3": "c4b85825eeea326d66a275a4dd2ac7dc",
+      "wireshark_ja3_string": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,13-11-4832-23-10-35-65281-51-51764-45-5-17613-43-16-18-27-0-41,4588-29-23-24,0",
+      "wireshark_ja4": "t13d1518h2_8daaf6152771_aafaef052750",
+      "sni": "test.lab",
+      "alpn": "h2"
+    }
+  ]
+}

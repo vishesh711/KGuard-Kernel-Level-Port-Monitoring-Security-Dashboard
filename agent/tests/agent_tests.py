@@ -92,8 +92,14 @@ class Agent:
             self.proc.kill()
         return open(self.log.name).read()
 
-    def events(self):
+    def records(self):
         return [json.loads(line) for line in open(self.out.name) if line.startswith("{")]
+
+    def events(self):
+        return [r for r in self.records() if r.get("type") != "payload"]
+
+    def payloads(self):
+        return [r for r in self.records() if r.get("type") == "payload"]
 
 
 def udp_burst(port, count, rate, family=socket.AF_INET, addr="127.0.0.1"):
