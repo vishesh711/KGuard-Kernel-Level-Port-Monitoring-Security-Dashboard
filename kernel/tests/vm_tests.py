@@ -339,28 +339,29 @@ def test_tricky_packets():
     check("IPv4 with options: ports read after the options",
           opts and opts[0]["src_port"] == 41001 and opts[0]["ip_len"] == 20 + 8 + 8 + 4, opts[:1])
 
-    frags_out = [e for e in events if e["direction"] == "out" and e["protocol"] == "UDP" and e["family"] == 4
-                 and (e["dst_port"] == 5102 or e["fragment"])]
-    first, rest = [e for e in frags_out if not e["fragment"]], [e for e in frags_out if e["fragment"]]
-    check("IPv4 fragments as sent: first has the ports, the others are flagged with no ports",
-          len(first) == 1 and first[0]["src_port"] == 41002 and len(rest) == 3
-          and all(e["src_port"] == e["dst_port"] == 0 for e in rest),
-          f"first={[(e['src_port'], e['ip_len']) for e in first]} rest={[e['ip_len'] for e in rest]}")
-    whole = find(dst_port=5102, direction="in")
-    check("IPv4 fragments as received: reassembled into one datagram before LOCAL_IN",
-          len(whole) == 1 and whole[0]["ip_len"] == 20 + 8 + 3000 and not whole[0]["fragment"],
-          [(e["ip_len"], e["fragment"]) for e in whole])
+    # Whether the capture hooks see a datagram reassembled or as fragments depends on the kernel path:
+    # conntrack's defragmenter (before the hooks) reassembles IPv4, but skips IPv6 packets that already
+    # carry a conntrack entry, as loopback ones do. Either way the parse must be right: one datagram
+    # with its ports and full length, or fragments where only the first has the ports.
+    def datagram(family, port, sport, payload_len, direction):
+        frags = [e for e in events if e["family"] == family and e["direction"] == direction
+                 and (e["dst_port"] == port or (e["fragment"] and e["src_port"] == e["dst_port"] == 0))]
+        whole = [e for e in frags if not e["fragment"] and e["ip_len"] == payload_len]
+        if len(frags) == 1 and whole:
+            return whole[0]["src_port"] == sport, "reassembled"
+        first = [e for e in frags if not e["fragment"]]
+        return (len(first) == 1 and first[0]["src_port"] == sport and len(frags) >= 3,
+                f"{len(frags)} fragments, first with ports {first[0]['src_port'] if first else None}")
+
+    for label, family, port, sport, length in (("IPv4", 4, 5102, 41002, 20 + 8 + 3000),
+                                               ("IPv6", 6, 5104, 41004, 40 + 8 + 3000)):
+        for direction in ("out", "in"):
+            ok, how = datagram(family, port, sport, length, direction)
+            check(f"{label} fragmented datagram ({direction}): parsed correctly", ok, how)
 
     ext = find(dst_port=5103, direction="out")
     check("IPv6 extension headers (hop-by-hop, destination options) are skipped to reach UDP",
           ext and ext[0]["src_port"] == 41003 and ext[0]["protocol"] == "UDP", ext[:1])
-    v6_out = [e for e in events if e["family"] == 6 and e["direction"] == "out"
-              and (e["dst_port"] == 5104 or e["fragment"])]
-    v6_in = find(dst_port=5104, direction="in")
-    check("IPv6 fragments: first has the ports, the rest are flagged; reassembled on receipt",
-          [e["fragment"] for e in v6_out].count(False) == 1 and [e["fragment"] for e in v6_out].count(True) >= 2
-          and len(v6_in) == 1 and v6_in[0]["src_port"] == 41004,
-          f"out={[(e['dst_port'], e['fragment']) for e in v6_out]} in={len(v6_in)}")
     short = [e for e in events if e["protocol"] == "TCP" and e["family"] == 4 and e["ip_len"] == 22]
     check("a truncated TCP header is not read past the packet (no ports, no crash)",
           short and all(e["src_port"] == e["dst_port"] == 0 for e in short), short[:1])
@@ -373,16 +374,16 @@ def test_perf():
         check("perf available", False, "perf not installed")
         return
     sink, port = udp_sink()
-    rec = subprocess.Popen([perf, "record", "-q", "-o", "/tmp/kguard-perf.data", "-e", "kguard:*", "-a",
-                            "--", "sleep", "3"], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-    time.sleep(1)
-    send_udp(port, 200)
-    rec.wait(timeout=60)
+    # The traffic is the command perf runs, so it is recorded from the first packet
+    sender = f"import socket; s = socket.socket(2, 2); [s.sendto(b'k', ('127.0.0.1', {port})) for _ in range(200)]"
+    rec = subprocess.run([perf, "record", "-q", "-o", "/tmp/kguard-perf.data", "-e", "kguard:*", "-a", "--",
+                          sys.executable, "-c", sender], capture_output=True, text=True, timeout=120)
     sink.close()
     out = subprocess.run([perf, "script", "-i", "/tmp/kguard-perf.data"], capture_output=True, text=True)
-    hits = [line for line in out.stdout.splitlines() if "kguard:kguard_event" in line]
-    check("perf record -e 'kguard:*' captures kguard_event tracepoints",
-          len(hits) >= 200, f"{len(hits)} events; {(hits[0].strip()[-80:] if hits else out.stderr.strip()[-150:])}")
+    hits = [line for line in out.stdout.splitlines() if "kguard:kguard_event" in line and f":{port}" in line]
+    check("perf record -e 'kguard:*' captures kguard_event tracepoints (200 sent, seen out and in)",
+          len(hits) >= 400, f"{len(hits)} events; " + (hits[0].strip()[-90:] if hits
+                                                         else (rec.stderr + out.stderr).strip()[-150:]))
 
 
 def test_ipv6():
