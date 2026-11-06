@@ -198,8 +198,8 @@ def start_sshd():
                              "-o", f"ListenAddress={HOST}", "-o", "Port=22", "-o", f"PidFile={work}/pid",
                              "-o", "UsePAM=no", "-o", "PasswordAuthentication=yes", "-o", "MaxStartups=100"],
                             stdout=subprocess.DEVNULL, stderr=open(f"{work}/sshd.log", "w"))
-    if not wait_for(lambda: subprocess.run(["bash", "-c", f"exec 3<>/dev/tcp/{HOST}/22"],
-                                           capture_output=True).returncode == 0, timeout=15):
+    # Wait for its log line, not a test connection: KGuard would rightly report that one
+    if not wait_for(lambda: "Server listening" in open(f"{work}/sshd.log").read(), timeout=15):
         raise RuntimeError("sshd did not start: " + open(f"{work}/sshd.log").read()[-300:])
     return proc
 
@@ -208,14 +208,25 @@ def test_brute_force():
     words = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False)
     words.write("\n".join(f"guess{i}" for i in range(60)))
     words.close()
+    started = time.time()
     r = in_ns(["hydra", "-l", "nosuchuser", "-P", words.name, "-t", "4", "-I", "-f", f"ssh://{HOST}"],
               timeout=300)
-    tried = next((line for line in r.stdout.splitlines() if "login tries" in line), r.stdout.strip()[-120:])
+    took = time.time() - started
+    summary = [line for line in (r.stdout + r.stderr).splitlines()
+               if any(k in line for k in ("login tries", "[ERROR]", "valid password", "finished"))]
     found = wait_for(lambda: [a for a in alerts() if a["alert_type"] == "BRUTE_FORCE"])
+    syns, page = [], 1
+    while True:  # every connection attempt to port 22 KGuard stored, across pages
+        reply = api(f"/api/events/?src_ip={ATTACKER}&dst_port=22&size=100&page={page}")
+        syns += [e for e in reply["items"] if e["flags"] == 2 and e.get("direction") == "in"]
+        if page >= reply.get("pages", 1):
+            break
+        page += 1
     meta = (found[0].get("metadata") or {}) if found else {}
     check("hydra against sshd raises BRUTE_FORCE on port 22", found and found[0]["dst_port"] == 22,
-          f"{found[0]['title']}: {meta.get('connections')} connections; hydra: {tried.strip()}" if found
-          else f"no alert; hydra: {tried}")
+          f"{found[0]['title']}: {meta.get('connections')} connections" if found
+          else f"no alert; hydra took {took:.0f} s and KGuard saw {len(syns)} connection attempts to "
+               f"port 22; hydra: {summary[-2:]}")
 
 
 def test_syn_flood():

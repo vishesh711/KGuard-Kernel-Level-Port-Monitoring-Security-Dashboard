@@ -214,3 +214,20 @@ def test_resolver_scans_on_first_lookup_right_after_boot(tmp_path, monkeypatch):
     monkeypatch.setattr(pr.time, "monotonic", lambda: 3.0)
     resolver = ProcessResolver(str(tmp_path), min_rescan_seconds=60)
     assert resolver.lookup(5555) == (100, "nc")
+
+
+def test_bounded_reads_share_the_limit_between_rings(fake_device):
+    """A busy CPU's ring must not starve the others when reads are bounded"""
+    t = time.time_ns()
+    build_fake_device(fake_device, [[v2_event(timestamp=t + i, dst_port=1000 + i) for i in range(30)],
+                                    [v2_event(timestamp=t + i, dst_port=2000 + i) for i in range(30)]])
+    dev = KGuardDevice(fake_device)
+    try:
+        first = dev.read(limit=20)
+        assert sorted({e["dst_port"] // 1000 for e in first}) == [1, 2]
+        assert sum(e["dst_port"] < 2000 for e in first) == 10
+        rest = dev.read()
+        assert len(first) + len(rest) == 60  # nothing lost or read twice
+        assert {e["dst_port"] for e in first} & {e["dst_port"] for e in rest} == set()
+    finally:
+        dev.close()
