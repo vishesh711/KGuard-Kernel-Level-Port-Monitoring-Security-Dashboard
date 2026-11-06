@@ -11,7 +11,8 @@ and SYN floods per source, and can drop traffic from blocked or flooding
 sources before connection tracking ever sees it. It ships in monitor-only
 mode and never drops anything until you turn enforcement on.
 
-Tested on Linux 6.8 (Ubuntu 24.04 kernel), in a VM, with real traffic.
+Tested on Linux 6.8 (Ubuntu 24.04 kernel), in a VM, with real traffic; also builds
+without warnings against Linux 7.0 (what GitHub CI runs).
 
 ## How it works
 

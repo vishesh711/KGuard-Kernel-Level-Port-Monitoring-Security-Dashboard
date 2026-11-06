@@ -195,3 +195,13 @@ def test_device_reader_class_reads_once(fake_device):
         assert dev.read() == []
     finally:
         dev.close()
+
+
+def test_resolver_scans_on_first_lookup_right_after_boot(tmp_path, monkeypatch):
+    # On a freshly booted machine time.monotonic() is small; the first lookup must still scan
+    import app.services.process_resolver as pr
+
+    make_fake_proc(tmp_path, {100: ("nc", [5555])})
+    monkeypatch.setattr(pr.time, "monotonic", lambda: 3.0)
+    resolver = ProcessResolver(str(tmp_path), min_rescan_seconds=60)
+    assert resolver.lookup(5555) == (100, "nc")

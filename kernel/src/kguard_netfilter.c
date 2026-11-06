@@ -207,7 +207,7 @@ static void kguard_set_owner(struct sk_buff *skb,
 	 */
 	if (ev->direction == KGUARD_DIR_OUT && in_task() && sk) {
 		ev->pid = task_tgid_nr(current);
-		__get_task_comm(ev->comm, sizeof(ev->comm), current);
+		get_task_comm(ev->comm, current);
 		ev->info |= KGUARD_EVF_PROC;
 	}
 

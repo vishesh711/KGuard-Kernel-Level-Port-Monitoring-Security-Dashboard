@@ -21,7 +21,8 @@ class ProcessResolver:
         self.proc_root = proc_root
         self.min_rescan_seconds = min_rescan_seconds
         self._owners: Dict[int, Owner] = {}
-        self._last_scan = 0.0
+        # -inf, not 0: the monotonic clock may be small on a freshly booted machine
+        self._last_scan = float("-inf")
         self.scans = 0
 
     def lookup(self, inode: int) -> Optional[Owner]:

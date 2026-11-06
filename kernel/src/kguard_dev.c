@@ -18,6 +18,7 @@
 #include <linux/miscdevice.h>
 #include <linux/mm.h>
 #include <linux/poll.h>
+#include <linux/vmalloc.h>
 #include <linux/wait.h>
 
 static DECLARE_WAIT_QUEUE_HEAD(kguard_wq);
@@ -77,7 +78,7 @@ static const struct file_operations kguard_dev_fops = {
 	.release	= kguard_dev_release,
 	.mmap		= kguard_dev_mmap,
 	.poll		= kguard_dev_poll,
-	.llseek		= no_llseek,
+	/* No .llseek: stream_open() makes the file non-seekable */
 };
 
 static struct miscdevice kguard_miscdev = {
