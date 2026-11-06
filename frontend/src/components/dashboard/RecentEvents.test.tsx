@@ -27,7 +27,10 @@ describe('RecentEvents', () => {
   it('names the sender from its TCP fingerprint', () => {
     render(
       <RecentEvents
-        events={[{ ...base, os_guess: 'nmap', tcp_options: 'M', ttl: 47 }, { ...base, id: 2, os_guess: 'unknown' }]}
+        events={[
+          { ...base, os_guess: 'nmap', tcp_options: 'M', ttl: 47 },
+          { ...base, id: 2, os_guess: 'unknown' },
+        ]}
       />,
     )
     expect(screen.getByText('nmap')).toHaveAttribute('title', 'TCP fingerprint: M, TTL 47')
