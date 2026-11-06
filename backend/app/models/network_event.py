@@ -59,6 +59,8 @@ class NetworkEvent(Base):
     process_name = Column(String(16), nullable=True, comment="Name of that process")
     uid = Column(BigInteger, nullable=True, comment="User that owns the socket")
     sock_ino = Column(BigInteger, nullable=True, comment="Socket inode number")
+    host_id = Column(Integer, nullable=True, index=True,
+                     comment="Agent that reported the event; empty for this server's own collector")
 
     # Classification
     is_suspicious = Column(Boolean, default=False, index=True,
@@ -104,6 +106,7 @@ class NetworkEvent(Base):
             "process_name": self.process_name,
             "uid": self.uid,
             "sock_ino": self.sock_ino,
+            "host_id": self.host_id,
         }
 
     @classmethod

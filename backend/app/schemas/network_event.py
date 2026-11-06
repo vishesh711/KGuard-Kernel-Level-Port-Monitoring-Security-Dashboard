@@ -42,6 +42,7 @@ class NetworkEventResponse(NetworkEventBase):
     process_name: Optional[str] = Field(None, description="Name of that process")
     uid: Optional[int] = Field(None, description="User that owns the socket")
     sock_ino: Optional[int] = Field(None, description="Socket inode number")
+    host_id: Optional[int] = Field(None, description="Reporting agent (empty: this server)")
 
     model_config = ConfigDict(from_attributes=True)
 

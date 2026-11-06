@@ -65,6 +65,11 @@ def is_connection_attempt(event: NetworkEvent) -> bool:
     return event.protocol == "UDP"
 
 
+def source_key(src_ip: str, host_id: Optional[int]) -> str:
+    """Per-host identity of a source: local events keep the bare IP"""
+    return src_ip if host_id is None else f"{host_id}|{src_ip}"
+
+
 def event_time(event: NetworkEvent) -> float:
     """Event time in seconds, from the kernel timestamp when available"""
     if event.timestamp:
@@ -89,6 +94,10 @@ class AnomalyDetectorService:
 
         # Recent connection attempts per source IP
         self.windows: Dict[str, Deque[Attempt]] = {}
+
+        # True while the kernel module reports scans and SYN floods itself
+        # (see kernel_alerts.py); the matching rules here are then skipped
+        self.kernel_detection = False
 
         # Last alert time per rule and source, to rate-limit alerts
         self.recent_alerts: Dict[str, datetime] = {}
@@ -118,32 +127,43 @@ class AnomalyDetectorService:
 
         self.stats["events_analyzed"] += len(events)
 
-        # Connection attempts in this batch, grouped by source
+        # Connection attempts in this batch, grouped by (host, source)
         batch: Dict[str, List[Attempt]] = defaultdict(list)
+        sources: Dict[str, tuple] = {}
         for event in events:
             if not is_connection_attempt(event):
                 continue
+            host_id = getattr(event, "host_id", None)
+            key = source_key(event.src_ip, host_id)
+            sources[key] = (event.src_ip, host_id)
             attempt = Attempt(
                 time=event_time(event),
                 dst_ip=event.dst_ip,
                 dst_port=event.dst_port,
                 event_id=event.id,
             )
-            batch[event.src_ip].append(attempt)
-            self._remember(event.src_ip, attempt)
+            batch[key].append(attempt)
+            self._remember(key, attempt)
 
         attempt_count = sum(len(a) for a in batch.values())
         self.stats["connection_attempts"] += attempt_count
 
         alerts: List[SecurityAlert] = []
         try:
-            for src_ip, new_attempts in batch.items():
-                window = self.windows.get(src_ip)
+            for key, new_attempts in batch.items():
+                window = self.windows.get(key)
                 if not window:
                     continue
-                alerts.extend(self._check_port_scan(src_ip, window))
-                alerts.extend(self._check_high_frequency(src_ip, window))
-                alerts.extend(self._check_suspicious_ports(src_ip, new_attempts))
+                src_ip, host_id = sources[key]
+                found: List[SecurityAlert] = []
+                # The local kernel module reports scans and floods itself
+                if not (host_id is None and self.kernel_detection):
+                    found.extend(self._check_port_scan(key, src_ip, window))
+                    found.extend(self._check_high_frequency(key, src_ip, window))
+                found.extend(self._check_suspicious_ports(key, src_ip, new_attempts))
+                for alert in found:
+                    alert.host_id = host_id
+                alerts.extend(found)
         except Exception as e:
             logger.error(f"Error during anomaly analysis: {e}")
 
@@ -167,13 +187,13 @@ class AnomalyDetectorService:
         while window and window[0].time < cutoff:
             window.popleft()
 
-    def _check_port_scan(self, src_ip: str, window: Deque[Attempt]) -> List[SecurityAlert]:
+    def _check_port_scan(self, key: str, src_ip: str, window: Deque[Attempt]) -> List[SecurityAlert]:
         ports = {a.dst_port for a in window}
         if len(ports) < self.port_scan_threshold:
             return []
 
-        key = f"port_scan_{src_ip}"
-        if self._is_in_cooldown(key):
+        cooldown = f"port_scan_{key}"
+        if self._is_in_cooldown(cooldown):
             return []
 
         span = window[-1].time - window[0].time
@@ -195,18 +215,18 @@ class AnomalyDetectorService:
             "detection_method": "sliding_window_distinct_ports",
         }
 
-        self._start_cooldown(key)
+        self._start_cooldown(cooldown)
         self.stats["port_scans_detected"] += 1
         logger.warning(f"Port scan detected from {src_ip}: {len(ports)} ports in {span:.1f}s")
         return [alert]
 
-    def _check_high_frequency(self, src_ip: str, window: Deque[Attempt]) -> List[SecurityAlert]:
+    def _check_high_frequency(self, key: str, src_ip: str, window: Deque[Attempt]) -> List[SecurityAlert]:
         per_minute = len(window) * 60.0 / self.window_seconds
         if per_minute <= self.high_frequency_threshold:
             return []
 
-        key = f"high_freq_{src_ip}"
-        if self._is_in_cooldown(key):
+        cooldown = f"high_freq_{key}"
+        if self._is_in_cooldown(cooldown):
             return []
 
         span = window[-1].time - window[0].time
@@ -235,14 +255,14 @@ class AnomalyDetectorService:
             },
         )
 
-        self._start_cooldown(key)
+        self._start_cooldown(cooldown)
         self.stats["high_frequency_detected"] += 1
         logger.warning(f"High frequency connections from {src_ip}: {per_minute:.0f}/min")
         return [alert]
 
-    def _check_suspicious_ports(self, src_ip: str, attempts: List[Attempt]) -> List[SecurityAlert]:
+    def _check_suspicious_ports(self, key: str, src_ip: str, attempts: List[Attempt]) -> List[SecurityAlert]:
         # A known scanner touches many sensitive ports; the scan alert covers it
-        if self._is_in_cooldown(f"port_scan_{src_ip}"):
+        if self._is_in_cooldown(f"port_scan_{key}"):
             return []
 
         alerts = []
@@ -250,8 +270,8 @@ class AnomalyDetectorService:
             if attempt.dst_port not in self.suspicious_ports:
                 continue
 
-            key = f"suspicious_port_{src_ip}_{attempt.dst_port}"
-            if self._is_in_cooldown(key):
+            cooldown = f"suspicious_port_{key}_{attempt.dst_port}"
+            if self._is_in_cooldown(cooldown):
                 continue
 
             alerts.append(
@@ -262,7 +282,7 @@ class AnomalyDetectorService:
                     event_ids=[attempt.event_id] if attempt.event_id is not None else [],
                 )
             )
-            self._start_cooldown(key)
+            self._start_cooldown(cooldown)
             self.stats["suspicious_ports_detected"] += 1
             logger.warning(
                 f"Suspicious port access: {src_ip} -> {attempt.dst_ip}:{attempt.dst_port}"
@@ -348,6 +368,7 @@ class AnomalyDetectorService:
             "alert_cooldown_seconds": self.alert_cooldown.total_seconds(),
             "active_cooldowns": len(self.recent_alerts),
             "tracked_sources": len(self.windows),
+            "kernel_detection": self.kernel_detection,
         }
 
     def cleanup_old_cooldowns(self) -> None:

@@ -65,6 +65,7 @@ class SecurityAlertResponse(SecurityAlertBase):
     resolved: bool = Field(..., description="Whether the alert has been resolved")
     resolved_at: Optional[datetime] = Field(None, description="When the alert was resolved")
     resolution_notes: Optional[str] = Field(None, description="Notes about alert resolution")
+    host_id: Optional[int] = Field(None, description="Agent whose traffic raised the alert")
 
     model_config = ConfigDict(from_attributes=True)
 

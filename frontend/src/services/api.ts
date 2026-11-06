@@ -1,5 +1,6 @@
 import axios from 'axios'
 import {
+  AgentInfo,
   NetworkEvent,
   SecurityAlert,
   NetworkEventStats,
@@ -135,6 +136,12 @@ export const api = {
 
   async getActiveAlertsSummary() {
     const response = await apiClient.get('/api/alerts/active/summary')
+    return response.data
+  },
+
+  // Agents (remote hosts)
+  async getAgents(): Promise<AgentInfo[]> {
+    const response = await apiClient.get('/api/agents/')
     return response.data
   },
 

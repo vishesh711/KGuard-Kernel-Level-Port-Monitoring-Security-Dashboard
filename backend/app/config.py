@@ -53,6 +53,16 @@ class Settings(BaseSettings):
     proc_root: str = "/proc"
     data_collection_interval: float = 1.0
 
+    # Kernel guard alerts: "auto" uses the module's in-kernel scan and SYN-rate
+    # detection when it is loaded (and turns off the backend's own copies of
+    # those rules); "off" always uses the backend's rules
+    kernel_detection: str = "auto"
+    kguard_module_path: str = "/sys/module/kguard"
+
+    # Agents (remote hosts). Enrollment is disabled while the key is empty.
+    agent_enrollment_key: str = ""
+    max_ingest_events: int = 20000
+
     # Anomaly Detection
     # A source becomes a port scanner after trying this many distinct ports
     # within the detection window

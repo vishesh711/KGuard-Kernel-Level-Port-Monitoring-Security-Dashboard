@@ -32,6 +32,14 @@
  * Control (Generic Netlink family KGUARD_GENL_NAME)
  * -------------------------------------------------
  * See enum kguard_genl_cmd and enum kguard_genl_attr below.
+ *
+ * Guard (in-kernel detection and enforcement)
+ * -------------------------------------------
+ * A PRE_ROUTING hook keeps per-source state (distinct ports tried, SYN token
+ * bucket) and raises KGUARD_CMD_ALERT multicasts. With enforce off (the
+ * default) it never drops packets; alerts report what it would have done.
+ * With enforce on it drops traffic from blocked sources and SYNs over the
+ * rate limit. Allowlisted and local addresses are never dropped or blocked.
  */
 #ifndef _UAPI_LINUX_KGUARD_H
 #define _UAPI_LINUX_KGUARD_H
@@ -135,6 +143,13 @@ enum kguard_genl_cmd {
 	KGUARD_CMD_GET_CONFIG,	/* reply: KGUARD_ATTR_CFG_* */
 	KGUARD_CMD_SET_CONFIG,	/* request: any KGUARD_ATTR_CFG_* (admin only) */
 	KGUARD_CMD_CONFIG_CHANGED,	/* multicast notification */
+	KGUARD_CMD_ALERT,	/* multicast: KGUARD_ATTR_ALERT_*, ADDR, NETNS */
+	KGUARD_CMD_BLOCK_ADD,	/* ADDR [TIMEOUT] (admin only) */
+	KGUARD_CMD_BLOCK_DEL,	/* ADDR (admin only) */
+	KGUARD_CMD_BLOCK_LIST,	/* dump: ADDR, EXPIRES_MS, REASON per entry */
+	KGUARD_CMD_ALLOW_ADD,	/* ADDR [PREFIX_LEN] (admin only) */
+	KGUARD_CMD_ALLOW_DEL,	/* ADDR [PREFIX_LEN] (admin only) */
+	KGUARD_CMD_ALLOW_LIST,	/* reply: one ALLOW_ENTRY nest per prefix */
 	__KGUARD_CMD_MAX,
 };
 
@@ -158,9 +173,55 @@ enum kguard_genl_attr {
 	KGUARD_ATTR_CFG_CAPTURE_IPV6,
 	KGUARD_ATTR_CFG_SOCKET_LOOKUP,
 	KGUARD_ATTR_CFG_WAKEUP_EVENTS,	/* u32: wake the reader every N events */
+	/* guard statistics (u64) */
+	KGUARD_ATTR_STAT_SOURCES,	/* sources being tracked */
+	KGUARD_ATTR_STAT_TRACK_FULL,	/* new sources not tracked: table full */
+	KGUARD_ATTR_STAT_ALERTS,	/* alerts raised */
+	KGUARD_ATTR_STAT_BLOCK_DROPS,	/* packets dropped from blocked sources */
+	KGUARD_ATTR_STAT_RATE_DROPS,	/* SYNs dropped over the rate limit */
+	KGUARD_ATTR_STAT_WOULD_DROP,	/* drops skipped because enforce is off */
+	KGUARD_ATTR_STAT_BLOCKS,	/* entries in the blocklist */
+	/* guard configuration */
+	KGUARD_ATTR_CFG_ENFORCE,	/* u8: 0 monitor only (default), 1 drop */
+	KGUARD_ATTR_CFG_AUTO_BLOCK,	/* u8: block scanners automatically */
+	KGUARD_ATTR_CFG_SCAN_THRESHOLD,	/* u32: distinct ports that make a scan */
+	KGUARD_ATTR_CFG_SCAN_WINDOW_MS,	/* u32: window for counting ports */
+	KGUARD_ATTR_CFG_SYN_RATE,	/* u32: new connections per second per source */
+	KGUARD_ATTR_CFG_SYN_BURST,	/* u32: token bucket depth */
+	KGUARD_ATTR_CFG_BLOCK_TIMEOUT,	/* u32: seconds an automatic block lasts */
+	/* addresses, blocks and alerts */
+	KGUARD_ATTR_ADDR,		/* binary: 4 bytes IPv4 or 16 bytes IPv6 */
+	KGUARD_ATTR_PREFIX_LEN,		/* u8 */
+	KGUARD_ATTR_TIMEOUT,		/* u32 seconds, 0 = until removed */
+	KGUARD_ATTR_EXPIRES_MS,		/* u64 milliseconds left, 0 = never */
+	KGUARD_ATTR_REASON,		/* u8: enum kguard_block_reason */
+	KGUARD_ATTR_NETNS,		/* u32 */
+	KGUARD_ATTR_TIMESTAMP,		/* u64 nanoseconds, CLOCK_REALTIME */
+	KGUARD_ATTR_ALERT_TYPE,		/* u8: enum kguard_alert_type */
+	KGUARD_ATTR_ALERT_ACTION,	/* u8: enum kguard_alert_action */
+	KGUARD_ATTR_ALERT_PORTS,	/* u32: distinct ports in the window */
+	KGUARD_ATTR_ALERT_ATTEMPTS,	/* u32: connection attempts in the window */
+	KGUARD_ATTR_ALLOW_ENTRY,	/* nest: ADDR, PREFIX_LEN */
 	__KGUARD_ATTR_MAX,
 };
 
 #define KGUARD_ATTR_MAX (__KGUARD_ATTR_MAX - 1)
+
+enum kguard_alert_type {
+	KGUARD_ALERT_SCAN	= 1,	/* many distinct ports from one source */
+	KGUARD_ALERT_SYN_RATE	= 2,	/* new connections over the rate limit */
+};
+
+enum kguard_alert_action {
+	KGUARD_ACTION_NONE	= 0,	/* monitor only, or source is protected */
+	KGUARD_ACTION_DROPPED	= 1,	/* excess packets dropped */
+	KGUARD_ACTION_BLOCKED	= 2,	/* source added to the blocklist */
+};
+
+enum kguard_block_reason {
+	KGUARD_REASON_MANUAL	= 1,
+	KGUARD_REASON_SCAN	= 2,
+	KGUARD_REASON_SYN_RATE	= 3,
+};
 
 #endif /* _UAPI_LINUX_KGUARD_H */

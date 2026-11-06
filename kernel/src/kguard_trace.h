@@ -4,6 +4,7 @@
  *
  *   kguard_event      every captured packet
  *   kguard_ring_full  an event lost because its CPU's ring was full
+ *   kguard_alert      the guard raised an alert
  *
  * Use with perf (perf record -e 'kguard:*') or tracefs
  * (/sys/kernel/tracing/events/kguard/).
@@ -18,6 +19,8 @@
 #include <linux/tracepoint.h>
 #include <net/ipv6.h>
 #include <uapi/linux/kguard.h>
+
+struct kguard_alert;
 
 TRACE_EVENT(kguard_event,
 
@@ -78,6 +81,39 @@ TRACE_EVENT(kguard_ring_full,
 	),
 
 	TP_printk("cpu=%u dropped=%llu", __entry->cpu, __entry->dropped)
+);
+
+TRACE_EVENT(kguard_alert,
+
+	TP_PROTO(const struct kguard_alert *alert),
+
+	TP_ARGS(alert),
+
+	TP_STRUCT__entry(
+		__array(u8, saddr, 16)
+		__field(u32, netns)
+		__field(u32, ports)
+		__field(u32, attempts)
+		__field(u8, type)
+		__field(u8, action)
+	),
+
+	TP_fast_assign(
+		if (alert->src.family == AF_INET)
+			ipv6_addr_set_v4mapped(*(const __be32 *)alert->src.bytes,
+					       (struct in6_addr *)__entry->saddr);
+		else
+			memcpy(__entry->saddr, alert->src.bytes, 16);
+		__entry->netns = alert->netns;
+		__entry->ports = alert->ports;
+		__entry->attempts = alert->attempts;
+		__entry->type = alert->type;
+		__entry->action = alert->action;
+	),
+
+	TP_printk("type=%u action=%u src=%pI6c netns=%u ports=%u attempts=%u",
+		  __entry->type, __entry->action, __entry->saddr, __entry->netns,
+		  __entry->ports, __entry->attempts)
 );
 
 #endif /* _KGUARD_TRACE_H */

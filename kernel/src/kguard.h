@@ -7,6 +7,9 @@
  *     -> per-CPU lock-free rings (kguard_ring.c)
  *     -> /dev/kguard mmap + poll (kguard_dev.c), or /proc/kguard JSON
  *        debug view (kguard_proc.c)
+ * Guard (in-kernel detection and enforcement):
+ *   PRE_ROUTING hook (kguard_guard.c) -> per-source state, blocklist and
+ *   allowlist (kguard_track.c) -> alerts over Generic Netlink
  * Control and statistics:
  *   Generic Netlink (kguard_genl.c), debugfs (kguard_stats.c),
  *   tracepoints (kguard_trace.h)
@@ -28,7 +31,7 @@
 
 /* Module information */
 #define KGUARD_MODULE_NAME	"kguard"
-#define KGUARD_MODULE_VERSION	"2.0.0"
+#define KGUARD_MODULE_VERSION	"3.0.0"
 #define KGUARD_MODULE_DESC	"KGuard network port monitor"
 #define KGUARD_MODULE_AUTHOR	"KGuard Development Team"
 
@@ -50,6 +53,14 @@ struct kguard_config {
 	bool capture_ipv6;
 	bool socket_lookup;
 	u32 wakeup_events;
+	/* guard */
+	bool enforce;		/* false: monitor only, never drop */
+	bool auto_block;	/* block scanners (only when enforcing) */
+	u32 scan_threshold;	/* distinct ports in the window that make a scan */
+	u32 scan_window_ms;
+	u32 syn_rate;		/* new connections per second per source */
+	u32 syn_burst;
+	u32 block_timeout;	/* seconds an automatic block lasts */
 };
 
 extern struct kguard_config kguard_cfg;
@@ -63,6 +74,10 @@ struct kguard_stats {
 	u64 filtered;
 	u64 ns_total;	/* hook time of sampled packets */
 	u64 ns_samples;
+	u64 alerts;
+	u64 block_drops;
+	u64 rate_drops;
+	u64 would_drop;
 };
 
 DECLARE_PER_CPU(struct kguard_stats, kguard_pcpu_stats);
@@ -75,6 +90,13 @@ struct kguard_stats_total {
 	u64 ns_per_packet;
 	u64 ring_fill;
 	u64 netns;
+	u64 sources;
+	u64 track_full;
+	u64 alerts;
+	u64 block_drops;
+	u64 rate_drops;
+	u64 would_drop;
+	u64 blocks;
 };
 
 void kguard_stats_read(struct kguard_stats_total *total);
@@ -118,6 +140,69 @@ unsigned int kguard_netns_count(void);
 /* Generic Netlink (kguard_genl.c) */
 int kguard_genl_init(void);
 void kguard_genl_cleanup(void);
+
+/* Guard: addresses, per-source state, blocklist, allowlist (kguard_track.c) */
+struct kguard_addr {
+	u8 bytes[16];	/* network byte order; IPv4 uses bytes 0-3 */
+	u8 family;	/* AF_INET or AF_INET6 */
+	u8 __pad[3];
+};
+
+struct kguard_alert {
+	u64 timestamp_ns;
+	struct kguard_addr src;
+	u32 netns;
+	u32 ports;
+	u32 attempts;
+	u8 type;	/* enum kguard_alert_type */
+	u8 action;	/* enum kguard_alert_action */
+};
+
+struct net;
+struct netlink_callback;
+
+int kguard_track_init(unsigned int max_sources, unsigned int idle_timeout,
+		      const char *allow);
+void kguard_track_cleanup(void);
+u64 kguard_track_count(void);
+u64 kguard_track_full(void);
+
+bool kguard_addr_is_local(struct net *net, const struct kguard_addr *a);
+int kguard_addr_from_nla(struct kguard_addr *a, const void *data, int len);
+int kguard_addr_len(const struct kguard_addr *a);
+
+/* Per-source accounting for one connection attempt; see kguard_guard.c */
+struct kguard_attempt_result {
+	bool scan;		/* crossed the scan threshold (alert due) */
+	bool over_rate;		/* SYN beyond the token bucket */
+	bool rate_alert;	/* rate alert due */
+	bool protected;		/* local address: never drop or block */
+	u32 ports;
+	u32 attempts;
+};
+
+int kguard_track_attempt(struct net *net, const struct kguard_addr *src,
+			 u16 dport, bool syn, struct kguard_attempt_result *res);
+
+int kguard_block_add(struct net *net, const struct kguard_addr *a,
+		     u32 timeout_s, u8 reason, gfp_t gfp);
+int kguard_block_del(const struct kguard_addr *a);
+bool kguard_block_check(const struct kguard_addr *a);
+u64 kguard_block_count(void);
+int kguard_block_walk(int (*fn)(void *ctx, const struct kguard_addr *a,
+				u64 expires_ms, u8 reason),
+		      void *ctx, unsigned long skip);
+
+int kguard_allow_add(const struct kguard_addr *a, u8 prefix_len);
+int kguard_allow_del(const struct kguard_addr *a, u8 prefix_len);
+bool kguard_allow_match(const struct kguard_addr *a);
+int kguard_allow_walk(int (*fn)(void *ctx, const struct kguard_addr *a, u8 prefix_len),
+		      void *ctx);
+
+/* Guard hook and alerts (kguard_guard.c, kguard_genl.c) */
+unsigned int kguard_guard_hook(void *priv, struct sk_buff *skb,
+			       const struct nf_hook_state *state);
+void kguard_genl_alert(const struct kguard_alert *alert);
 
 /* Logging helpers; kguard_debug is enabled at runtime via dynamic debug */
 #define kguard_debug(fmt, ...)	pr_debug(fmt "\n", ##__VA_ARGS__)

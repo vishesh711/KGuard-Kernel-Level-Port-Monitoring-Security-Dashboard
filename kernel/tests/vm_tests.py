@@ -6,9 +6,11 @@ Loads the module and checks each feature against real traffic. Run as root
 on a disposable machine or VM whose kernel matches the build, from the
 kernel/ directory:
 
-    make && make tools && sudo python3 tests/vm_tests.py
+    make && make tools && sudo python3 tests/vm_tests.py [--guard]
 
-Needs: python3, curl, nc (OpenBSD netcat), ip (iproute2).
+--guard runs only the Phase 3 guard tests (tests/guard_tests.py).
+
+Needs: python3, curl, nc (OpenBSD netcat), ip (iproute2), nmap.
 """
 
 import errno
@@ -398,16 +400,25 @@ def main():
         raise SystemExit("run as root")
     if not os.path.exists("/sys/kernel/debug/kguard") and not os.path.ismount("/sys/kernel/debug"):
         sh("mount -t debugfs none /sys/kernel/debug", check_rc=False)
+    if not os.path.exists(f"{TRACEFS}/events"):
+        sh(f"mount -t tracefs nodev {TRACEFS}", check_rc=False)
     tests = [test_load, test_mmap_python_reader, test_exclusive_reader, test_c_reader_throughput,
              test_no_busy_polling, test_process_attribution,
              test_invalid_packets, test_ipv6, test_network_namespaces, test_netlink_control, test_tracepoints,
              test_ring_full, test_reader_group, test_clean_unload]
+    guard_only = "--guard" in sys.argv
     try:
-        for test in tests:
+        for test in tests[:-1] if not guard_only else []:
             try:
                 test()
             except Exception as e:  # report and keep going
                 check(f"{test.__name__} ran without errors", False, repr(e)[:200])
+
+        # Phase 3: in-kernel detection and enforcement
+        import guard_tests
+        guard_tests.h = sys.modules[__name__]
+        guard_tests.run_all()
+        test_clean_unload()
     finally:
         unload()
     failed = [name for name, ok in results if not ok]

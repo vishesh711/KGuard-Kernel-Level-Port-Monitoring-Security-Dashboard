@@ -6,12 +6,22 @@ needs: connection-tracking state, network namespace, and the process or
 socket owner behind the connection. Events reach user space through
 per-CPU lock-free ring buffers mapped straight into the reader's memory.
 
-Tested on Linux 6.8 (Ubuntu 24.04 kernel).
+It also guards the machine from inside the kernel: it detects port scans
+and SYN floods per source, and can drop traffic from blocked or flooding
+sources before connection tracking ever sees it. It ships in monitor-only
+mode and never drops anything until you turn enforcement on.
+
+Tested on Linux 6.8 (Ubuntu 24.04 kernel), in a VM, with real traffic.
 
 ## How it works
 
 ```
- packet ─► Netfilter hooks (LOCAL_IN / LOCAL_OUT / FORWARD, IPv4 + IPv6,
+ packet ─► guard hook (PRE_ROUTING, first): allowlist ─► blocklist ─►
+           per-source scan + SYN-rate tracking ─► alerts (Netlink multicast),
+           drops only when enforcing
+      │
+      ▼
+           Netfilter hooks (LOCAL_IN / LOCAL_OUT / FORWARD, IPv4 + IPv6,
            every network namespace, just after conntrack)
               │  parse headers safely, add conntrack state, find the
               │  socket owner (UID, socket inode, sending process)
@@ -31,6 +41,8 @@ Tested on Linux 6.8 (Ubuntu 24.04 kernel).
 |---|---|
 | `include/uapi/linux/kguard.h` | The ABI shared with user space: event record, ring layout, Netlink commands |
 | `src/kguard_netfilter.c` | Hooks registered per network namespace; IPv4/IPv6 parsing; conntrack state; socket and process attribution |
+| `src/kguard_guard.c` | Guard hook: allowlist, blocklist, scan and SYN-rate detection, enforcement, alerts |
+| `src/kguard_track.c` | Per-source state table (RCU hash table, capped, garbage-collected), blocklist, allowlist |
 | `src/kguard_ring.c` | Per-CPU single-producer rings with acquire/release ordering |
 | `src/kguard_dev.c` | `/dev/kguard`: exclusive open, `mmap`, `poll` |
 | `src/kguard_proc.c` | `/proc/kguard` JSON view |
@@ -39,7 +51,7 @@ Tested on Linux 6.8 (Ubuntu 24.04 kernel).
 | `src/kguard_trace.h` | Tracepoints |
 | `tools/kguard_reader.c` | Example zero-copy reader in C |
 | `tools/kguardctl.py` | Netlink control tool (standard-library Python) |
-| `tests/` | Test suite that runs against a real kernel, plus a VM runner |
+| `tests/` | Test suite that runs against a real kernel (`vm_tests.py`, `guard_tests.py`), plus a VM runner |
 
 ### Design notes
 
@@ -65,6 +77,18 @@ Tested on Linux 6.8 (Ubuntu 24.04 kernel).
 - **Namespaces.** Hooks are registered through `pernet_operations`, so
   every new network namespace (for example a container) is covered
   automatically and its events carry its namespace inode number.
+- **Per-source state.** An `rhashtable` keyed by (address, namespace),
+  looked up under RCU on the packet path, with one spinlock per source so
+  sources never contend. Each source has a 1024-bit bitmap of ports tried
+  in the current window (distinct-port count) and a SYN token bucket. The
+  table is capped by `max_sources`; a worker frees idle sources every
+  second (sooner when nearly full), so a flood of spoofed addresses cannot
+  exhaust memory. Sources come from their own slab cache (`kguard_src` in
+  `/proc/slabinfo`).
+- **Fail-safe.** `enforce` is off by default. Allowlisted prefixes skip the
+  guard entirely, and the machine's own addresses (loopback and every
+  local address) are tracked and alerted on but can never be blocked or
+  rate-limited.
 
 ## Building
 
@@ -98,9 +122,19 @@ sudo insmod kguard.ko
 | `socket_lookup` | 1 | Find the local socket of incoming TCP/UDP packets |
 | `conntrack` | 1 | Enable connection tracking to report packet state |
 | `wakeup_events` | 64 | Wake a waiting reader every N events |
+| `enforce` | 0 | 0: monitor only, never drop. 1: drop blocked sources and excess SYNs |
+| `auto_block` | 0 | Block detected scanners automatically (only when enforcing) |
+| `scan_threshold` | 20 | Distinct ports from one source within the window that count as a scan |
+| `scan_window_ms` | 5000 | Window for counting distinct ports |
+| `syn_rate` / `syn_burst` | 200 / 400 | New TCP connections per second (and burst) allowed per source |
+| `block_timeout` | 600 | Seconds an automatic block lasts (0 = until removed) |
+| `allow` | "" | Prefixes never blocked, e.g. `allow=10.0.0.0/8,2001:db8::/32` |
+| `max_sources` | 65536 | Most sources tracked at once (caps memory) |
+| `idle_timeout` | 60 | Seconds of silence before a source's state is freed |
 
-All but `buffer_size`, `reader_gid` and `conntrack` can be changed while
-running with `kguardctl set`.
+`buffer_size`, `reader_gid`, `conntrack`, `allow`, `max_sources` and
+`idle_timeout` are fixed at load time; everything else can be changed while
+running with `kguardctl set`, and the allowlist with `kguardctl allow`.
 
 ## Reading events
 
@@ -157,6 +191,31 @@ The Compose files add group 1500 to the backend (override with
 `KGUARD_READER_GID`); uncomment the `devices:` entry to pass
 `/dev/kguard` through.
 
+## Guard: detection and blocking
+
+```bash
+python3 tools/kguardctl.py watch                      # live alerts
+sudo python3 tools/kguardctl.py allow 192.168.1.0/24  # your management network first
+sudo python3 tools/kguardctl.py set enforce=1         # start dropping
+sudo python3 tools/kguardctl.py set auto_block=1 block_timeout=600
+sudo python3 tools/kguardctl.py block 203.0.113.9 --timeout 3600
+python3 tools/kguardctl.py blocks
+sudo python3 tools/kguardctl.py unblock 203.0.113.9
+```
+
+What happens to a packet from a source that is not allowlisted:
+
+| Situation | Monitor only (default) | `enforce=1` |
+|---|---|---|
+| Source is blocked | counted as `would_drop` | dropped (`block_drops`) |
+| `scan_threshold` distinct ports in the window | `scan` alert | `scan` alert; blocked if `auto_block=1` |
+| SYNs beyond `syn_rate`/`syn_burst` | `syn_rate` alert, counted as `would_drop` | excess SYNs dropped (`rate_drops`), alert |
+
+Alerts are sent at most once per source and kind every 10 seconds, and at
+most 100 per second overall. They go to the Netlink `events` group (the
+backend stores them as dashboard alerts) and to the `kguard:kguard_alert`
+tracepoint. Trying to block a local or allowlisted address is refused.
+
 ## Control and statistics
 
 ```bash
@@ -166,7 +225,7 @@ sudo python3 tools/kguardctl.py set capture_out=0 wakeup_events=128
 python3 tools/kguardctl.py watch                 # print configuration changes
 
 sudo mount -t debugfs none /sys/kernel/debug     # if not mounted
-sudo cat /sys/kernel/debug/kguard/{stats,rings,config}
+sudo cat /sys/kernel/debug/kguard/{stats,rings,config,blocks,allow}
 
 sudo perf record -e 'kguard:*' -a sleep 5        # or tracefs:
 echo 1 | sudo tee /sys/kernel/tracing/events/kguard/enable
@@ -175,10 +234,17 @@ echo 1 | sudo tee /sys/kernel/tracing/events/kguard/enable
 ## Testing
 
 `tests/vm_tests.py` loads the module and checks every feature with real
-traffic: lossless zero-copy reads at 5,000 packets/s, idle CPU use,
-exclusive access, process attribution (curl, an `nc` listener), conntrack
-states including invalid packets, IPv6, network namespaces, live
+traffic (61 checks): lossless zero-copy reads at 5,000 packets/s, idle CPU
+use, exclusive access, process attribution (curl, an `nc` listener),
+conntrack states including invalid packets, IPv6, network namespaces, live
 reconfiguration over Netlink, tracepoints, ring overflow and permissions.
+
+`tests/guard_tests.py` (run by `vm_tests.py`) builds an attacker network
+namespace joined by a veth pair and checks: an nmap SYN scan is reported
+within a second, monitor-only mode drops nothing, blocks are enforced and
+expire, IPv6 blocks, the allowlist always wins, local addresses cannot be
+blocked, a SYN flood is cut to the configured rate, auto-blocking, and that
+20,000 spoofed sources keep the state table at its cap with no leaks.
 
 Run it in a throwaway VM so a kernel bug cannot take down your machine:
 
@@ -198,4 +264,6 @@ kernel/tests/run_in_vm.sh /boot/vmlinuz-X     # or a specific one
 | `open /dev/kguard: Device or resource busy` | Another reader (often the backend) holds it |
 | `/proc/kguard: Device or resource busy` | Same: a reader holds `/dev/kguard` |
 | `dropped` keeps rising | The reader is too slow: raise `buffer_size` or read more often |
+| `refused: that address is local or allowlisted` | By design: local and allowlisted addresses are never blocked |
+| `track_full` rising in stats | More active sources than `max_sources`; raise it, or lower `idle_timeout` |
 | Kernel log | `dmesg \| grep kguard` |

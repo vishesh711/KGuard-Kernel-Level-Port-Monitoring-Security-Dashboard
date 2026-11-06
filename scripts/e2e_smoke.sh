@@ -87,6 +87,15 @@ done
 [[ "$source" == "device" ]] || fail "backend is not reading /dev/kguard (source: $source)"
 pass "backend reads events through /dev/kguard (zero-copy)"
 
+kdet=""
+for _ in $(seq 1 30); do
+    kdet=$(curl -sf "$API/api/health/kernel" | "$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["details"]["kernel_detection"])')
+    [[ "$kdet" == "True" ]] && break
+    sleep 0.5
+done
+[[ "$kdet" == "True" ]] || fail "backend is not receiving in-kernel alerts"
+pass "backend subscribed to in-kernel scan and SYN-rate alerts"
+
 echo "== Scanning 127.0.0.1"
 if command -v nmap >/dev/null; then
     nmap -sS -Pn -n -p 1-200 --max-retries 0 127.0.0.1 >/dev/null
@@ -110,7 +119,15 @@ done
 [[ -n "$found" ]] || { tail -50 "$WORK/backend.log" >&2; fail "no PORT_SCAN alert"; }
 pass "PORT_SCAN alert raised for $found"
 
+origin=$(curl -sf "$API/api/alerts/?alert_type=PORT_SCAN" | "$PYTHON" -c '
+import json, sys
+items = json.load(sys.stdin)["items"]
+print(len(items), (items[0].get("metadata") or {}).get("source", "backend"))')
+[[ "$origin" == "1 kernel" ]] || fail "expected one kernel-detected PORT_SCAN alert, got: $origin"
+pass "scan detected in the kernel and reported once"
+
 events=$(curl -sf "$API/api/events/stats/summary?hours=1" | "$PYTHON" -c 'import json,sys; d=json.load(sys.stdin); print(d["total_events"], d["suspicious_events"])')
+[[ "${events#* }" -gt 0 ]] || fail "no events were marked suspicious after the scan ($events)"
 pass "events stored / flagged suspicious: $events"
 
 echo "== Checking process attribution"

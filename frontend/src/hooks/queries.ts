@@ -10,6 +10,7 @@ export const queryKeys = {
   alertStats: (hours: number) => ['alerts', 'stats', hours] as const,
   recentAlerts: (size: number) => ['alerts', 'recent', size] as const,
   activeAlerts: ['alerts', 'active'] as const,
+  agents: ['agents'] as const,
 }
 
 /** Fallback polling when the live connection is down */
@@ -75,4 +76,12 @@ export interface ActiveAlertsSummary {
   total_active: number
   severity_breakdown: Record<'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW', number>
   type_breakdown: Record<string, number>
+}
+
+export function useAgents() {
+  return useQuery({
+    queryKey: queryKeys.agents,
+    queryFn: () => api.getAgents(),
+    refetchInterval: 10_000,
+  })
 }

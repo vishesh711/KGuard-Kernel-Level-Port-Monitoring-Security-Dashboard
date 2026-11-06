@@ -14,6 +14,8 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_TMP}/kguard-test.db"
 os.environ["PROC_KGUARD_PATH"] = f"{_TMP}/kguard"
 # No device by default, so "auto" falls back to the fake /proc file
 os.environ["KGUARD_DEVICE_PATH"] = f"{_TMP}/kguard-dev"
+# No kernel module: the backend uses its own detection rules
+os.environ["KGUARD_MODULE_PATH"] = f"{_TMP}/no-such-module"
 os.environ["DEBUG"] = "true"
 # Keep the background collector idle; tests run collection cycles themselves
 os.environ["DATA_COLLECTION_INTERVAL"] = "3600"
@@ -106,6 +108,9 @@ def clean_state():
         for table in reversed(Base.metadata.sorted_tables):
             conn.execute(table.delete())
     anomaly_detector.reset()
+    anomaly_detector.kernel_detection = False
+    from app.services.kernel_alerts import kernel_alerts
+    kernel_alerts.reset()
     data_collector.close_device()
     data_collector.active_source = None
     data_collector.stats.update(

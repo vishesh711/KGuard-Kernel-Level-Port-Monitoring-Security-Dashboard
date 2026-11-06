@@ -28,6 +28,7 @@ from ..config import settings
 from ..database import SessionLocal
 from ..models.network_event import NetworkEvent
 from .anomaly_detector import anomaly_detector
+from .kernel_alerts import kernel_alerts
 from .kguard_device import KGuardDevice
 from .process_resolver import ProcessResolver
 from .websocket_manager import broadcast_network_event, broadcast_security_alert
@@ -73,6 +74,7 @@ class DataCollectorService:
         logger.info(f"Starting data collection (source: {self.source_setting})")
         try:
             while self.running:
+                kernel_alerts.check()
                 await self.collect_once()
                 await asyncio.sleep(self.collection_interval)
         finally:
@@ -91,7 +93,7 @@ class DataCollectorService:
 
     async def collect_once(self) -> int:
         """
-        Run one collection cycle: read, parse, store, detect, broadcast.
+        Run one collection cycle on this server: read, then ingest.
         Returns the number of events stored.
         """
         try:
@@ -99,24 +101,33 @@ class DataCollectorService:
             if not events:
                 return 0
             self._attach_processes(events)
-
-            stored = self._store_events(events)
-            self.stats["events_collected"] += len(events)
-            self.stats["events_stored"] += len(stored)
-            self.stats["last_collection"] = datetime.utcnow()
-
-            alerts = await anomaly_detector.analyze_events(stored)
-            if alerts:
-                self.stats["alerts_generated"] += len(alerts)
-                self._mark_suspicious(alerts)
-
-            await self._broadcast(stored, alerts)
-            return len(stored)
-
+            return await self.ingest(events)
         except Exception as e:
             self.stats["errors"] += 1
             logger.error(f"Error collecting events: {e}", exc_info=True)
             return 0
+
+    async def ingest(self, events: List[Dict[str, Any]], host_id: Optional[int] = None) -> int:
+        """
+        Store, analyze and broadcast validated events, from this server's own
+        kernel (host_id None) or from a remote agent.
+        """
+        stored = self._store_events(events, host_id)
+        self.stats["events_collected"] += len(events)
+        self.stats["events_stored"] += len(stored)
+        self.stats["last_collection"] = datetime.utcnow()
+
+        alerts = await anomaly_detector.analyze_events(stored)
+        if alerts:
+            self.stats["alerts_generated"] += len(alerts)
+            self._mark_suspicious(alerts)
+
+        await self._broadcast(stored, alerts)
+        return len(stored)
+
+    def valid_events(self, events: List[Any]) -> List[Dict[str, Any]]:
+        """Keep only well-formed event dictionaries"""
+        return [e for e in events if self._validate_event(e)]
 
     def _read_events(self) -> List[Dict[str, Any]]:
         """Take every waiting event from the configured source"""
@@ -241,11 +252,21 @@ class DataCollectorService:
             return False
         return 0 <= src_port <= 65535 and 0 <= dst_port <= 65535
 
-    def _store_events(self, events: List[Dict[str, Any]]) -> List[NetworkEvent]:
+    def _store_events(
+        self, events: List[Dict[str, Any]], host_id: Optional[int] = None
+    ) -> List[NetworkEvent]:
         """
         Insert events in one statement and return them with their new IDs.
         The returned objects stay usable after the session closes.
         """
+        # Sources this server's kernel alerted on recently
+        flagged = {}
+        if host_id is None:
+            for ip in {e["src_ip"] for e in events}:
+                event_type = kernel_alerts.flag_for(ip)
+                if event_type:
+                    flagged[ip] = event_type
+
         rows = [
             {
                 "timestamp": e["timestamp"],
@@ -255,8 +276,9 @@ class DataCollectorService:
                 "dst_port": int(e["dst_port"]),
                 "protocol": e["protocol"],
                 "flags": int(e.get("flags", 0) or 0),
-                "is_suspicious": False,
-                "event_type": "normal",
+                "is_suspicious": e["src_ip"] in flagged,
+                "event_type": flagged.get(e["src_ip"], "normal"),
+                "host_id": host_id,
                 **self._context(e),
             }
             for e in events
@@ -363,6 +385,7 @@ class DataCollectorService:
                 if self.stats["last_collection"] else None
             ),
             "kernel_events_dropped": self.stats["kernel_events_dropped"],
+            "kernel_detection": kernel_alerts.active,
             "error": error,
         }
 

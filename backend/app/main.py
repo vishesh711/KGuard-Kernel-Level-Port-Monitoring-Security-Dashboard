@@ -15,11 +15,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 
-from .api import alerts_router, events_router, health_router
+from .api import agents_router, alerts_router, events_router, health_router
 from .config import settings
 from .database import check_db_connection, init_db
 from .services.anomaly_detector import anomaly_detector
 from .services.data_collector import data_collector
+from .services.kernel_alerts import kernel_alerts
 from .services.websocket_manager import connection_manager
 
 # Configure logging
@@ -42,6 +43,7 @@ async def periodic_tasks():
                 await broadcast_stats_update({
                     "data_collector": data_collector.get_stats(),
                     "anomaly_detector": anomaly_detector.get_stats(),
+                    "kernel_alerts": kernel_alerts.get_stats(),
                     "websocket": connection_manager.get_stats(),
                 })
 
@@ -74,6 +76,7 @@ async def lifespan(app: FastAPI):
     finally:
         logger.info("Shutting down KGuard Backend Service")
         data_collector.stop_collection()
+        kernel_alerts.close()
         for task in background:
             task.cancel()
         await asyncio.gather(*background, return_exceptions=True)
@@ -111,6 +114,7 @@ if not settings.debug:
 app.include_router(events_router)
 app.include_router(alerts_router)
 app.include_router(health_router)
+app.include_router(agents_router)
 
 
 @app.get("/")
