@@ -212,8 +212,9 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
   *Done when:* a test alert reaches a Slack channel.
 - [ ] **S6.8 Metrics.** Prometheus `/metrics`: events/s, drops, detection time, alerts by type; include a sample Grafana dashboard.
   *Done when:* the Grafana dashboard loads from `docker compose up`.
-- [ ] **S6.9 Structured logging.** JSON logs with request IDs; log rotation.
+- [x] **S6.9 Structured logging.** JSON logs with request IDs; log rotation.
   *Done when:* each log line is valid JSON.
+  *Status:* Done. Every line, including uvicorn's start-up and shutdown, Alembic's, warnings and uncaught exceptions, is one JSON object. Each request and WebSocket connection gets an ID (the client's X-Request-ID if sensible), returned in the response and on every line logged while it is handled; one access line per request with status and duration. A test starts the real server (`python -m app`), sends good, 404 and 422 requests, stops it and parses every line of its output; also checked by hand with DEBUG on (code reloader) and off. LOG_FILE rotates by size (tested: each file under the limit and all JSON); in Docker, stdout is rotated by Docker. The production image now runs one process instead of four workers, which had each read the kernel rings and kept separate detection state.
 
 ## Phase 7 — Frontend upgrade
 

@@ -15,6 +15,7 @@ services:
       - DEBUG=false
       - DATABASE_URL=postgresql+psycopg://kguard:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/kguard
       - LOG_LEVEL=INFO
+      - LOG_FILE=/app/logs/kguard.log
       - SECRET_KEY=${SECRET_KEY}
     depends_on:
       postgres:
@@ -34,6 +35,12 @@ services:
     # host's processes:
     # pid: host
     restart: unless-stopped
+    # JSON log lines on stdout; Docker rotates them
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 30s

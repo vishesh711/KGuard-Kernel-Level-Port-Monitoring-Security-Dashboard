@@ -13,11 +13,11 @@ import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse
 
 from .api import agents_router, alerts_router, events_router, health_router, payloads_router
 from .config import settings
 from .database import check_db_connection, init_db
+from .logging_setup import RequestContextMiddleware, configure_logging
 from .services.anomaly_detector import anomaly_detector
 from .services.baseline import traffic_baseline
 from .services.data_collector import data_collector
@@ -26,11 +26,7 @@ from .services.packet_capture import packet_capture
 from .services.retention import retention_job
 from .services.websocket_manager import connection_manager
 
-# Configure logging
-logging.basicConfig(
-    level=getattr(logging, settings.log_level.upper()),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+configure_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -126,6 +122,9 @@ if not settings.debug:
         allowed_hosts=settings.allowed_hosts
     )
 
+# Outermost: request IDs, access log, and a logged 500 for unhandled errors
+app.add_middleware(RequestContextMiddleware, debug=settings.debug)
+
 # Include API routers
 app.include_router(events_router)
 app.include_router(alerts_router)
@@ -179,44 +178,13 @@ async def websocket_endpoint(websocket: WebSocket):
             await connection_manager.disconnect(client_id)
 
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
-    """Global exception handler"""
-    logger.error(f"Unhandled exception: {exc}", exc_info=True)
-
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": "Internal server error",
-            "detail": str(exc) if settings.debug else "An unexpected error occurred"
-        }
-    )
-
-
-@app.middleware("http")
-async def log_requests(request, call_next):
-    """Request logging middleware"""
-    start_time = asyncio.get_event_loop().time()
-
-    response = await call_next(request)
-
-    process_time = asyncio.get_event_loop().time() - start_time
-
-    logger.info(
-        f"{request.method} {request.url.path} - "
-        f"Status: {response.status_code} - "
-        f"Time: {process_time:.3f}s"
-    )
-
-    return response
-
-
 if __name__ == "__main__":
-    # Run the application
+    # Same as python -m app
     uvicorn.run(
         "app.main:app",
         host=settings.api_host,
         port=settings.api_port,
         reload=settings.debug,
-        log_level=settings.log_level.lower()
+        log_config=None,
+        access_log=False,
     )

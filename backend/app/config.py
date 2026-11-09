@@ -39,7 +39,11 @@ class Settings(BaseSettings):
 
     # Logging
     log_level: str = "INFO"
-    log_format: str = "json"
+    log_format: str = "json"  # "json" (one object per line) or "text"
+    # Also log to this file, rotated at log_max_bytes; empty = stdout only
+    log_file: str = ""
+    log_max_bytes: int = 10_000_000
+    log_backup_count: int = 5
 
     # Kernel Module Interface
     # Where events come from: "device" (/dev/kguard, zero-copy mmap),

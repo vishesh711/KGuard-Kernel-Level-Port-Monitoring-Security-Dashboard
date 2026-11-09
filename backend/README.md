@@ -74,22 +74,15 @@ The last run and what it deleted are shown in `/api/health/detailed`.
 
 ## Running
 
-### Development Server
-
 ```bash
-# Start development server with auto-reload
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
-# Or using the run script
-python -m app.main
+# Reloads on code changes when DEBUG=true; host and port from API_HOST / API_PORT
+python -m app
 ```
 
-### Production Server
-
-```bash
-# Start production server
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
-```
+Run one process. The collector reads the kernel's event rings and keeps
+detection state in memory, so several workers would each see part of the
+traffic. (`uvicorn app.main:app` also works, but its first few start-up
+lines are printed before the JSON logging is set up.)
 
 ## API Documentation
 
@@ -217,6 +210,36 @@ the exported flows, whose packet and byte counts equal tcpdump's for the
 same connection; Wireshark decodes the messages; an nmap scan blocked by the
 kernel gets a pcap of exactly the scanner's packets, including those before
 the alert.
+
+## Logging
+
+The backend is started with `python -m app` (the Docker images do this). Every
+log line it writes, uvicorn's included, is one JSON object:
+
+```json
+{"time": "2026-11-09T17:31:54.282Z", "level": "INFO", "logger": "kguard.access",
+ "message": "GET /api/alerts/ 200", "request_id": "demo-1", "method": "GET",
+ "path": "/api/alerts/", "client": "127.0.0.1", "status": 200, "duration_ms": 44.11}
+```
+
+Each HTTP request and WebSocket connection gets a request ID: the client's
+`X-Request-ID` header if it is 1-64 letters, digits, `.`, `_` or `-`,
+otherwise a new random one. It is sent back in the `X-Request-ID` response
+header and added to every line logged while handling that request, so
+`jq 'select(.request_id == "demo-1")'` shows one request's story. An
+unhandled error is logged with its traceback and the request ID, and the
+500 response includes the ID.
+
+| Setting | Default | |
+|---|---|---|
+| `LOG_LEVEL` | `INFO` | |
+| `LOG_FORMAT` | `json` | `text` for the readable `time - logger - level - message` form |
+| `LOG_FILE` | empty | also write to this file |
+| `LOG_MAX_BYTES` | 10000000 | rotate the file at this size |
+| `LOG_BACKUP_COUNT` | 5 | old files kept (`kguard.log.1` ...) |
+
+In production Compose the backend writes JSON to stdout, which Docker rotates
+(10 MB x 5), and to `./logs/kguard.log`.
 
 ## Testing
 
