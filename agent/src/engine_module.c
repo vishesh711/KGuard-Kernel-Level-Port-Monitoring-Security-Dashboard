@@ -113,4 +113,7 @@ const struct engine module_engine = {
 	.poll		= module_poll,
 	.kernel_dropped	= module_dropped,
 	.close		= module_close,
+	.block		= genl_block,
+	.unblock	= genl_unblock,
+	.enforcing	= genl_enforcing,
 };

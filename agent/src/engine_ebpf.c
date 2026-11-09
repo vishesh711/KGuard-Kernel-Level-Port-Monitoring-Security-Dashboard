@@ -404,6 +404,10 @@ static void ebpf_close(void)
 	skel = NULL;
 }
 
+static int engine_block(const char *prefix, unsigned int timeout_s);
+static int engine_unblock(const char *prefix);
+static int engine_enforcing(void);
+
 const struct engine ebpf_engine = {
 	.name		= "ebpf",
 	.open		= ebpf_open,
@@ -411,6 +415,9 @@ const struct engine ebpf_engine = {
 	.kernel_dropped	= ebpf_dropped,
 	.close		= ebpf_close,
 	.set_payload_cb	= ebpf_set_payload_cb,
+	.block		= engine_block,
+	.unblock	= engine_unblock,
+	.enforcing	= engine_enforcing,
 };
 
 /* ---- blocklist commands (work on the pinned map) ---- */
@@ -493,8 +500,10 @@ int ebpf_block(const char *prefix, unsigned int timeout_s)
 	fd = open_pinned();
 	if (fd < 0)
 		return 1;
-	if (timeout_s)
-		value.expires_ns = clock_ns(CLOCK_MONOTONIC) + (int64_t)timeout_s * 1000000000LL;
+	/* Renewing a block keeps its drop counter */
+	if (bpf_map_lookup_elem(fd, &key, &value))
+		memset(&value, 0, sizeof(value));
+	value.expires_ns = timeout_s ? clock_ns(CLOCK_MONOTONIC) + (int64_t)timeout_s * 1000000000LL : 0;
 	err = bpf_map_update_elem(fd, &key, &value, BPF_ANY);
 	close(fd);
 	if (err) {
@@ -523,6 +532,35 @@ int ebpf_unblock(const char *prefix)
 		return 1;
 	}
 	return 0;
+}
+
+/* Engine hooks for the blocklist sync: 0 or -errno */
+static int engine_block(const char *prefix, unsigned int timeout_s)
+{
+	int ret = ebpf_block(prefix, timeout_s);
+
+	return ret == 2 ? -EINVAL : ret ? -EIO : 0;
+}
+
+static int engine_unblock(const char *prefix)
+{
+	struct lpm_key key;
+	int fd, err;
+
+	if (parse_prefix(prefix, &key))
+		return -EINVAL;
+	fd = open_pinned();
+	if (fd < 0)
+		return -EIO;
+	err = bpf_map_delete_elem(fd, &key) ? -errno : 0;
+	close(fd);
+	return err;
+}
+
+/* XDP always drops what is in the map */
+static int engine_enforcing(void)
+{
+	return 1;
 }
 
 int ebpf_list_blocks(void)

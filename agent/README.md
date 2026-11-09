@@ -126,14 +126,52 @@ sudo kguard-agent unblock 203.0.113.0/24
 
 IPv4 is stored IPv4-mapped, so one trie holds both families.
 
+### Blocklist from the backend
+
+When running with `--server`, the agent fetches its host's blocklist from
+the backend every `--sync-seconds` (default 5; `--no-blocklist-sync` turns
+it off) and makes the engine match it:
+
+```
+GET /api/agents/blocklist?applied=<version>&failed=<n>&enforcing=<0|1>
+
+version 3f2a9c0d1e4b5a6f
+lease 300
+block 203.0.113.7/32 1794250000        (expiry, Unix seconds; 0 = none)
+```
+
+| Engine | How a block is applied |
+|---|---|
+| `ebpf` | an entry in the XDP LPM trie (addresses and prefixes) |
+| `module` | `KGUARD_CMD_BLOCK_ADD` / `BLOCK_DEL` over Generic Netlink (`src/genl.c`); the module blocks single addresses, so a prefix is reported as failed. If the module is monitor-only (`enforce=0`) the agent says so and the backend shows it. |
+
+Each entry is installed as a **lease** of at most `lease` seconds and renewed
+halfway, so:
+
+- an unblock reaches the kernel within one sync;
+- entries left behind when the agent dies or restarts end within one lease;
+- while the backend is unreachable, the agent keeps renewing the last list
+  it had, so blocks hold.
+
+The agent removes only entries it added; blocks made by hand
+(`kguard-agent block`, `kguardctl block`) are left alone. On the next poll
+it reports the version it applied, how many entries failed and whether the
+engine drops traffic, which `GET /api/response/status` shows per agent.
+
 ## Testing
 
-`tests/agent_tests.py` runs against a real kernel (31 checks): eBPF capture
+`tests/agent_tests.py` runs against a real kernel (53 checks): eBPF capture
 of every packet in and out, process attribution (curl, `nc` listeners
 started before and after the agent, first UDP datagram), IPv6, the XDP
 blocklist against an attacker namespace (IPv4 prefix, IPv6, expiry), the
 module engine, two agents with different engines reporting as two hosts,
-and recovery after a backend restart without losing events.
+recovery after a backend restart without losing events, and the response
+engine end to end: blocks made through the API enforced by the eBPF agent
+(XDP) and the module agent (Netlink), unblocking, the audit log, a port scan
+blocking its source automatically, a lease ending a block whose removal the
+dead agent never saw, monitor-only mode reported, and the backend blocking
+through its own machine's module. `AGENT_TESTS=test_response_engine` runs
+one test.
 
 ```bash
 make -C kernel && make -C agent

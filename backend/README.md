@@ -211,6 +211,87 @@ same connection; Wireshark decodes the messages; an nmap scan blocked by the
 kernel gets a pcap of exactly the scanner's packets, including those before
 the alert.
 
+## Response engine (blocking)
+
+Admins block addresses or prefixes; the record lives here and enforcers
+apply it:
+
+- **Agents** poll `GET /api/agents/blocklist` every few seconds: eBPF agents
+  drop in XDP, module agents use the module's Netlink block commands (see
+  `agent/README.md`).
+- **This machine's kernel module**, over Generic Netlink, when the backend
+  may (`LOCAL_ENFORCEMENT=auto` and `CAP_NET_ADMIN`; the production container
+  has no capabilities, so there agents do it).
+
+Enforcers hold each block as a lease of `BLOCK_LEASE_SECONDS` (300) and
+renew it, so a block whose removal never reached an enforcer still ends
+within one lease.
+
+| Endpoint | Who |
+|---|---|
+| `GET /api/response/blocks` (`?include_removed=true` for history) | any user |
+| `POST /api/response/blocks` `{"cidr", "reason", "minutes"?, "host_id"?}` | admin |
+| `DELETE /api/response/blocks/{id}` | admin |
+| `GET/POST /api/response/allowlist`, `DELETE /api/response/allowlist/{id}` | read: any user; change: admin |
+| `GET /api/response/audit` | any user |
+| `GET /api/response/status` (rules, local enforcement, each agent's sync state) | any user |
+
+Safety rules, for manual and automatic blocks alike: never loopback,
+link-local, multicast, unspecified or reserved addresses; nothing wider than
+/16 (IPv4) or /32 (IPv6); nothing overlapping the allowlist or an enrolled
+agent's address. Adding an allowlist entry unblocks what it covers. Blocking
+an address again keeps the later expiry. Rows are never deleted: unblocking
+and expiry record who and when, and every change is in the audit log.
+
+**Automatic blocking** is off until `AUTO_BLOCK=true`. Then the source of
+an alert is blocked for `AUTO_BLOCK_MINUTES` (60), doubled for each earlier
+automatic block of the same address in the last day (at most a week), when:
+
+- its type is in `AUTO_BLOCK_TYPES` (default `PORT_SCAN`, `BRUTE_FORCE`) and
+  its severity is at least `AUTO_BLOCK_MIN_SEVERITY` (`HIGH`), or
+- `AUTO_BLOCK_LISTED_SOURCES=true` and the source is on a threat list.
+
+SYN floods, spoofing and amplification are not in the default list on
+purpose: their source addresses are easily forged, so blocking them would
+let an attacker cut off anyone.
+
+## Alert enrichment
+
+Every alert gets `metadata.enrichment`:
+
+```json
+{"mitre": [{"id": "T1046", "name": "Network Service Discovery", "tactic": "Discovery",
+            "url": "https://attack.mitre.org/techniques/T1046/"}],
+ "src": {"ip": "5.188.10.7", "country": "NL", "country_name": "Netherlands",
+         "asn": 64500, "as_org": "Example Hosting", "threat_lists": ["firehol_level1"]},
+ "dst": {"ip": "10.0.0.1", "scope": "not public"}}
+```
+
+- **MITRE ATT&CK** from the alert type: port scan and sensitive-port probes
+  T1046, brute force T1110, SYN flood T1499.001, high packet rate
+  T1498.001, amplification T1498.002, DNS tunnelling T1071.004 + T1572,
+  malicious TLS client T1071.001 + T1573, unknown protocol T1095. Spoofed
+  traffic and baseline anomalies have no single technique and get none.
+- **Country and network owner** from MaxMind GeoLite2 (free, but needs an
+  account): put `GeoLite2-Country.mmdb` and `GeoLite2-ASN.mmdb` in
+  `data/geoip/` (or set `GEOIP_COUNTRY_DB`, `GEOIP_ASN_DB`). Replaced files are
+  picked up automatically. Without them these fields are left out.
+- **Bad-IP lists**: every `*.txt`, `*.netset`, `*.ipset` or `*.list` file in
+  `THREAT_LISTS_DIR` (`data/threatlists/`) is a list named after the file,
+  one address or prefix per line (FireHOL and Spamhaus DROP formats). Fetch
+  FireHOL level 1 and Spamhaus DROP/DROPv6 (`THREAT_LIST_URLS`) with
+
+  ```bash
+  python -m app.threatlists update      # then: python -m app.threatlists status
+  ```
+
+  daily from cron, or set `THREAT_LIST_UPDATE_HOURS=24`. A failed or empty
+  download keeps the previous copy. Files are re-read within a minute.
+
+Private and other non-public addresses are not looked up. Enrichment runs
+as a database hook when an alert is stored, so every detector gets it, and
+a failure never loses the alert.
+
 ## Login and security
 
 Every endpoint needs a login except `POST /api/auth/login`, the liveness

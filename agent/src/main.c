@@ -85,6 +85,7 @@ static void usage(void)
 		"                   [--state-dir DIR] [--token TOKEN] [--iface lo,eth0]\n"
 		"                   [--xdp-native] [--batch N] [--flush-ms N] [--queue N]\n"
 		"                   [--ringbuf-mb N] [--no-payloads]\n"
+		"                   [--sync-seconds N | --no-blocklist-sync]\n"
 		"  kguard-agent block PREFIX [--timeout SECONDS]   (eBPF engine)\n"
 		"  kguard-agent unblock PREFIX\n"
 		"  kguard-agent blocks\n");
@@ -99,6 +100,7 @@ int main(int argc, char **argv)
 		.flush_ms = 500,
 		.queue_capacity = 200000,
 		.ringbuf_mb = 8,
+		.sync_seconds = 5,
 	};
 	static const struct option opts[] = {
 		{ "engine", required_argument, NULL, 'e' },
@@ -115,13 +117,17 @@ int main(int argc, char **argv)
 		{ "queue", required_argument, NULL, 'q' },
 		{ "ringbuf-mb", required_argument, NULL, 'r' },
 		{ "no-payloads", no_argument, NULL, 'P' },
+		{ "sync-seconds", required_argument, NULL, 'S' },
+		{ "no-blocklist-sync", no_argument, NULL, 'N' },
 		{ "timeout", required_argument, NULL, 't' },
 		{ "help", no_argument, NULL, 'h' },
 		{ 0 },
 	};
 	const char *command, *key = NULL, *name = NULL;
 	unsigned int timeout = 0;
-	pthread_t reader;
+	struct blocksync_args sync_args;
+	pthread_t reader, syncer;
+	bool syncing;
 	int opt, ret;
 
 	if (argc < 2) {
@@ -142,6 +148,8 @@ int main(int argc, char **argv)
 		case 'x': cfg.xdp_native = true; break;
 		case 'o': cfg.stdout_mode = true; break;
 		case 'P': cfg.no_payloads = true; break;
+		case 'S': cfg.sync_seconds = strtoul(optarg, NULL, 10); break;
+		case 'N': cfg.sync_seconds = 0; break;
 		case 'b': cfg.batch_size = strtoul(optarg, NULL, 10); break;
 		case 'f': cfg.flush_ms = strtoul(optarg, NULL, 10); break;
 		case 'q': cfg.queue_capacity = strtoul(optarg, NULL, 10); break;
@@ -220,9 +228,15 @@ int main(int argc, char **argv)
 		 cfg.stdout_mode ? "printing to stdout" : cfg.server);
 
 	pthread_create(&reader, NULL, reader_thread, NULL);
+	/* Enforce the backend's blocklist on this host (S6.4) */
+	sync_args = (struct blocksync_args){ .cfg = &cfg, .engine = engine };
+	syncing = !cfg.stdout_mode && cfg.sync_seconds &&
+		  !pthread_create(&syncer, NULL, blocksync_thread, &sync_args);
 	ret = sender_run(&cfg, queue, payload_queue, engine);
 	agent_stop = 1;
 	pthread_join(reader, NULL);
+	if (syncing)
+		pthread_join(syncer, NULL);
 
 	log_info("kernel dropped %llu events", (unsigned long long)engine->kernel_dropped());
 	engine->close();
