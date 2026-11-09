@@ -133,6 +133,26 @@ def test_few_logins_are_not_brute_force(fake_device, collect, db):
     assert not [a for a in alerts(db) if a.alert_type == AlertType.BRUTE_FORCE]
 
 
+def test_slow_brute_force_over_minutes(fake_device, collect, db):
+    """SSH takes several passwords per connection: hydra opens only ~9 connections a minute"""
+    t0 = time.time_ns()
+    slow = [v2_event(src_ip="198.51.100.40", src_port=41000 + i, dst_port=22, flags=SYN, ct_state="new",
+                     timestamp=t0 + int(i * 12.5e9)) for i in range(12)]  # 12 in 150 s
+    build_fake_device(fake_device, [slow])
+    collect()
+    (alert,) = [a for a in alerts(db) if a.alert_type == AlertType.BRUTE_FORCE]
+    assert alert.alert_metadata["connections"] == 12
+
+
+def test_logins_spread_over_longer_than_the_window_are_not_brute_force(fake_device, collect, db):
+    t0 = time.time_ns()
+    sparse = [v2_event(src_ip="198.51.100.41", src_port=41000 + i, dst_port=22, flags=SYN, ct_state="new",
+                       timestamp=t0 + i * 35 * 10**9) for i in range(12)]  # 12 in 6.4 minutes
+    build_fake_device(fake_device, [sparse])
+    collect()
+    assert not [a for a in alerts(db) if a.alert_type == AlertType.BRUTE_FORCE]
+
+
 def random_sources(count, rng):
     return [f"10.{rng.randrange(1, 255)}.{rng.randrange(256)}.{rng.randrange(1, 255)}" for _ in range(count)]
 

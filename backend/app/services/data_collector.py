@@ -40,7 +40,9 @@ logger = logging.getLogger(__name__)
 REQUIRED_FIELDS = ("timestamp", "src_ip", "dst_ip", "src_port", "dst_port", "protocol")
 
 # Most events taken from the device per collection cycle
-MAX_EVENTS_PER_CYCLE = 200_000
+# Events read per cycle. Bounded, so decoding a flood's backlog cannot hold the
+# event loop (and the API) for long; a full batch is followed at once by the next.
+MAX_EVENTS_PER_CYCLE = 20_000
 # Events processed between chances for the event loop to serve API requests
 # and kernel alerts, so a flood cannot make the dashboard unresponsive
 INGEST_CHUNK = 5_000
@@ -54,6 +56,7 @@ class DataCollectorService:
         self.device_path = Path(settings.kguard_device_path)
         self.source_setting = settings.kguard_source.lower()
         self.device: Optional[KGuardDevice] = None
+        self.backlogged = False  # the last device read was a full batch
         self.active_source: Optional[str] = None
         self._device_error_logged = False
         self.resolver = ProcessResolver(settings.proc_root) if settings.resolve_processes else None
@@ -82,7 +85,8 @@ class DataCollectorService:
                 kernel_alerts.check()
                 await self.collect_once()
                 flow_exporter.tick()
-                await asyncio.sleep(self.collection_interval)
+                # Behind (the last read was a full batch): carry on, but let requests in
+                await asyncio.sleep(0 if self.backlogged else self.collection_interval)
         finally:
             self.running = False
 
@@ -148,6 +152,7 @@ class DataCollectorService:
             if device:
                 self.active_source = "device"
                 events = device.read(limit=MAX_EVENTS_PER_CYCLE)
+                self.backlogged = len(events) >= MAX_EVENTS_PER_CYCLE
                 self._note_dropped(device.dropped())
                 return events
             if self.source_setting == "device":

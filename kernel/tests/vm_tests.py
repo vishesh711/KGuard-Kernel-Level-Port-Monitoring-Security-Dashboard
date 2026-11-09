@@ -17,6 +17,7 @@ import errno
 import json
 import os
 import re
+import shutil
 import socket
 import struct
 import subprocess
@@ -50,7 +51,10 @@ def sh(cmd, check_rc=True, **kw):
 
 def load(*params):
     unload()
-    sh("modprobe -a nf_conntrack nf_socket_ipv4 nf_socket_ipv6")
+    # Loadable modules on distribution kernels, built in on test kernels
+    sh("modprobe -a nf_conntrack nf_socket_ipv4 nf_socket_ipv6", check_rc=False)
+    if not os.path.isdir("/sys/module/nf_conntrack"):
+        raise RuntimeError("nf_conntrack is neither loaded nor built in")
     sh(["insmod", KO, *params])
 
 
@@ -298,6 +302,93 @@ def test_invalid_packets():
           bad and all(e["ct_state"] == "invalid" for e in bad), [e["ct_state"] for e in bad])
 
 
+RAW_SENDER = """
+import socket, sys
+from scapy.all import IP, IPv6, IPOption, UDP, TCP, Raw, IPv6ExtHdrHopByHop, IPv6ExtHdrDestOpt, fragment, fragment6
+from scapy.all import IPv6ExtHdrFragment
+v4 = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
+v6 = socket.socket(socket.AF_INET6, socket.SOCK_RAW, socket.IPPROTO_RAW)
+def send4(p): v4.sendto(bytes(p), ("127.0.0.1", 0))
+def send6(p): v6.sendto(bytes(p), ("::1", 0))
+# IPv4 with 8 bytes of options (ihl 7): ports must come from after the options
+send4(IP(dst="127.0.0.1", options=[IPOption(b"\\x01" * 8)]) / UDP(sport=41001, dport=5101) / b"opts")
+# A 3000-byte datagram in 1000-byte fragments
+for f in fragment(IP(dst="127.0.0.1", id=4242) / UDP(sport=41002, dport=5102) / (b"x" * 3000), fragsize=1000):
+    send4(f)
+# IPv6 with hop-by-hop and destination-options headers before UDP
+send6(IPv6(dst="::1") / IPv6ExtHdrHopByHop() / IPv6ExtHdrDestOpt() / UDP(sport=41003, dport=5103) / b"ext")
+# IPv6 fragments
+for f in fragment6(IPv6(dst="::1") / IPv6ExtHdrFragment(id=77) / UDP(sport=41004, dport=5104) / (b"y" * 3000), 1200):
+    send6(f)
+# Says TCP, but the header is cut short: must not be read past the packet
+send4(IP(dst="127.0.0.1", proto=6) / Raw(b"\\x9f\\x0f"))
+"""
+
+
+def test_tricky_packets():
+    """K2.1: IP options, fragments, IPv6 extension headers and truncated headers are parsed safely"""
+    with KGuardDevice() as dev:
+        dev.read()
+        r = subprocess.run([sys.executable, "-W", "ignore", "-c", RAW_SENDER], capture_output=True, text=True)
+        events, _ = collect(dev, 1.0)
+    if r.returncode:
+        check("raw test packets sent (scapy)", False, r.stderr.strip()[-200:])
+        return
+
+    def find(**want):
+        return [e for e in events if all(e.get(k) == v for k, v in want.items())]
+
+    opts = find(dst_port=5101, direction="out")
+    check("IPv4 with options: ports read after the options",
+          opts and opts[0]["src_port"] == 41001 and opts[0]["ip_len"] == 20 + 8 + 8 + 4, opts[:1])
+
+    # Whether the capture hooks see a datagram reassembled or as fragments depends on the kernel path:
+    # conntrack's defragmenter (before the hooks) reassembles IPv4, but skips IPv6 packets that already
+    # carry a conntrack entry, as loopback ones do. Either way the parse must be right: one datagram
+    # with its ports and full length, or fragments where only the first has the ports.
+    def datagram(family, port, sport, payload_len, direction):
+        frags = [e for e in events if e["family"] == family and e["direction"] == direction
+                 and (e["dst_port"] == port or (e["fragment"] and e["src_port"] == e["dst_port"] == 0))]
+        whole = [e for e in frags if not e["fragment"] and e["ip_len"] == payload_len]
+        if len(frags) == 1 and whole:
+            return whole[0]["src_port"] == sport, "reassembled"
+        first = [e for e in frags if not e["fragment"]]
+        return (len(first) == 1 and first[0]["src_port"] == sport and len(frags) >= 3,
+                f"{len(frags)} fragments, first with ports {first[0]['src_port'] if first else None}")
+
+    for label, family, port, sport, length in (("IPv4", 4, 5102, 41002, 20 + 8 + 3000),
+                                               ("IPv6", 6, 5104, 41004, 40 + 8 + 3000)):
+        for direction in ("out", "in"):
+            ok, how = datagram(family, port, sport, length, direction)
+            check(f"{label} fragmented datagram ({direction}): parsed correctly", ok, how)
+
+    ext = find(dst_port=5103, direction="out")
+    check("IPv6 extension headers (hop-by-hop, destination options) are skipped to reach UDP",
+          ext and ext[0]["src_port"] == 41003 and ext[0]["protocol"] == "UDP", ext[:1])
+    short = [e for e in events if e["protocol"] == "TCP" and e["family"] == 4 and e["ip_len"] == 22]
+    check("a truncated TCP header is not read past the packet (no ports, no crash)",
+          short and all(e["src_port"] == e["dst_port"] == 0 for e in short), short[:1])
+
+
+def test_perf():
+    """K2.11: perf record -e 'kguard:*' sees the module's tracepoints"""
+    perf = shutil.which("perf")
+    if not perf:
+        check("perf available", False, "perf not installed")
+        return
+    sink, port = udp_sink()
+    # The traffic is the command perf runs, so it is recorded from the first packet
+    sender = f"import socket; s = socket.socket(2, 2); [s.sendto(b'k', ('127.0.0.1', {port})) for _ in range(200)]"
+    rec = subprocess.run([perf, "record", "-q", "-o", "/tmp/kguard-perf.data", "-e", "kguard:*", "-a", "--",
+                          sys.executable, "-c", sender], capture_output=True, text=True, timeout=120)
+    sink.close()
+    out = subprocess.run([perf, "script", "-i", "/tmp/kguard-perf.data"], capture_output=True, text=True)
+    hits = [line for line in out.stdout.splitlines() if "kguard:kguard_event" in line and f":{port}" in line]
+    check("perf record -e 'kguard:*' captures kguard_event tracepoints (200 sent, seen out and in)",
+          len(hits) >= 400, f"{len(hits)} events; " + (hits[0].strip()[-90:] if hits
+                                                         else (rec.stderr + out.stderr).strip()[-150:]))
+
+
 def test_ipv6():
     """K2.2: IPv6 with ports, in both directions"""
     sink, port = udp_sink(socket.AF_INET6, "::1")
@@ -436,9 +527,9 @@ def main():
     if not os.path.exists(f"{TRACEFS}/events"):
         sh(f"mount -t tracefs nodev {TRACEFS}", check_rc=False)
     tests = [test_load, test_mmap_python_reader, test_exclusive_reader, test_c_reader_throughput,
-             test_no_busy_polling, test_process_attribution, test_packet_headers,
+             test_no_busy_polling, test_process_attribution, test_packet_headers, test_tricky_packets,
              test_invalid_packets, test_ipv6, test_network_namespaces, test_netlink_control, test_tracepoints,
-             test_ring_full, test_reader_group, test_clean_unload]
+             test_perf, test_ring_full, test_reader_group, test_clean_unload]
     guard_only = "--guard" in sys.argv
     try:
         for test in tests[:-1] if not guard_only else []:

@@ -253,11 +253,13 @@ echo 1 | sudo tee /sys/kernel/tracing/events/kguard/enable
 ## Testing
 
 `tests/vm_tests.py` loads the module and checks every feature with real
-traffic (73 checks): lossless zero-copy reads at 5,000 packets/s, idle CPU
+traffic (84 checks): lossless zero-copy reads at 5,000 packets/s, idle CPU
 use, exclusive access, process attribution (curl, an `nc` listener),
 conntrack states including invalid packets, the SYN header fields (TTL,
-Linux's option order, MSS, window scale), IPv6, network namespaces, live
-reconfiguration over Netlink, tracepoints, ring overflow and permissions.
+Linux's option order, MSS, window scale), scapy-built tricky packets (IP
+options, IPv4/IPv6 fragments, IPv6 extension headers, a truncated TCP
+header), IPv6, network namespaces, live reconfiguration over Netlink,
+tracepoints (also through `perf record`), ring overflow and permissions.
 
 `tests/guard_tests.py` (run by `vm_tests.py`) builds an attacker network
 namespace joined by a veth pair and checks: an nmap SYN scan is reported
@@ -267,7 +269,13 @@ blocked, a SYN flood is cut to the configured rate, auto-blocking, that
 scapy-forged loopback, own-address and multicast sources raise `spoof`
 alerts (one per reason under a random-source flood, counting every packet),
 and that 20,000 spoofed sources keep the state table at its cap with no
-leaks.
+leaks, and 1,000,000 stay under the default cap.
+
+`tests/debug_kernel.sh /path/to/linux-source` builds a kernel with lockdep,
+KCSAN and kmemleak (`tests/debug.config`) and runs the suite on it, then
+reports anything those detectors found in kguard. On 6.8 it found one
+real bug (a lock-order problem when naming the sending process, now fixed)
+and reports nothing since.
 
 Run it in a throwaway VM so a kernel bug cannot take down your machine:
 

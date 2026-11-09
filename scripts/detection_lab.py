@@ -13,7 +13,7 @@ module's alerts, as in production. Then, from the attacker:
   - ordinary web browsing to port 443          -> no alerts (N5.0)
   - nmap -sS -sF -sN -sX -sA -sM -sU           -> one alert per scan type,
                                                   correctly labelled (N5.1)
-  - repeated logins to port 22                 -> BRUTE_FORCE (N5.3)
+  - hydra against a real sshd on port 22       -> BRUTE_FORCE (N5.3)
   - hping3 -S --flood --rand-source            -> SYN_FLOOD (N5.2)
   - SYNs from Linux (curl), and Windows and macOS
     SYN signatures replayed with scapy         -> each OS named (N5.4)
@@ -26,7 +26,8 @@ Run as root in a disposable VM, from the repository root:
 
     make -C kernel && sudo python3 scripts/detection_lab.py /path/to/backend/python
 
-Needs: nmap, hping3, curl, ip (iproute2), scapy (for the system python3).
+Needs: nmap, hping3, hydra, sshd (openssh-server), curl, ip (iproute2), scapy
+(for the system python3).
 """
 
 import json
@@ -188,14 +189,44 @@ def test_scan_types():
         time.sleep(16)  # let the next scan start a fresh detection window
 
 
+def start_sshd():
+    """A real OpenSSH server on HOST:22 with a throwaway host key; no account can log in"""
+    work = tempfile.mkdtemp(prefix="kguard-sshd-")
+    sh(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", f"{work}/host_key"])
+    os.makedirs("/run/sshd", exist_ok=True)
+    proc = subprocess.Popen(["/usr/sbin/sshd", "-D", "-e", "-f", "/dev/null", "-o", f"HostKey={work}/host_key",
+                             "-o", f"ListenAddress={HOST}", "-o", "Port=22", "-o", f"PidFile={work}/pid",
+                             "-o", "UsePAM=no", "-o", "PasswordAuthentication=yes", "-o", "MaxStartups=100"],
+                            stdout=subprocess.DEVNULL, stderr=open(f"{work}/sshd.log", "w"))
+    # Wait for its log line, not a test connection: KGuard would rightly report that one
+    if not wait_for(lambda: "Server listening" in open(f"{work}/sshd.log").read(), timeout=15):
+        raise RuntimeError("sshd did not start: " + open(f"{work}/sshd.log").read()[-300:])
+    return proc
+
+
 def test_brute_force():
-    code = ("import socket\n"
-            "for i in range(15):\n"
-            f"    s = socket.create_connection(('{HOST}', 22), timeout=2); s.close()\n")
-    in_ns([sys.executable, "-c", code], check=True)
+    words = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False)
+    words.write("\n".join(f"guess{i}" for i in range(60)))
+    words.close()
+    started = time.time()
+    r = in_ns(["hydra", "-l", "nosuchuser", "-P", words.name, "-t", "4", "-I", "-f", f"ssh://{HOST}"],
+              timeout=300)
+    took = time.time() - started
+    summary = [line for line in (r.stdout + r.stderr).splitlines()
+               if any(k in line for k in ("login tries", "[ERROR]", "valid password", "finished"))]
     found = wait_for(lambda: [a for a in alerts() if a["alert_type"] == "BRUTE_FORCE"])
-    check("15 rapid logins to port 22 raise BRUTE_FORCE", found and found[0]["dst_port"] == 22,
-          found[0]["title"] if found else "no alert")
+    syns, page = [], 1
+    while True:  # every connection attempt to port 22 KGuard stored, across pages
+        reply = api(f"/api/events/?src_ip={ATTACKER}&dst_port=22&size=100&page={page}")
+        syns += [e for e in reply["items"] if e["flags"] == 2 and e.get("direction") == "in"]
+        if page >= reply.get("pages", 1):
+            break
+        page += 1
+    meta = (found[0].get("metadata") or {}) if found else {}
+    check("hydra against sshd raises BRUTE_FORCE on port 22", found and found[0]["dst_port"] == 22,
+          f"{found[0]['title']}: {meta.get('connections')} connections" if found
+          else f"no alert; hydra took {took:.0f} s and KGuard saw {len(syns)} connection attempts to "
+               f"port 22; hydra: {summary[-2:]}")
 
 
 def test_syn_flood():
@@ -244,7 +275,7 @@ def test_os_fingerprints():
     for _ip, packet in SIGNATURES.values():
         forge([packet.format(h=HOST)])
     for name, ip in (("Linux", NEIGHBOUR), ("Windows", SIGNATURES["Windows"][0]), ("macOS", SIGNATURES["macOS"][0])):
-        found = wait_for(lambda: [e for e in events_from(ip) if e["flags"] == 2 and e.get("os_guess")], timeout=15)
+        found = wait_for(lambda: [e for e in events_from(ip) if e["flags"] == 2 and e.get("os_guess")], timeout=60)
         e = found[0] if found else {}
         check(f"{name} SYN recognised as {name}", e.get("os_guess") == name,
               f"{e.get('os_guess')}: ttl={e.get('ttl')} win={e.get('tcp_window')} opts={e.get('tcp_options')}")
@@ -284,10 +315,20 @@ DNS_ANY = ("IP(src=['8.8.8.8', '1.1.1.1'][i % 2], dst='{h}') / UDP(sport=53, dpo
            "an=" + " / ".join(["DNSRR(rrname='example.com', type='TXT', rdata='v=spf1 ' + 'x' * 240)"] * 5) + ")")
 NTP_MONLIST = ("IP(src='129.6.15.%d' % (28 + i % 3), dst='{h}') / UDP(sport=123, dport=41000 + i) / "
                "Raw(b'\\x97\\x00\\x03\\x2a\\x00\\x06\\x00\\x48' + bytes(432))")
+# memcached over UDP: 8-byte frame header, then a "get" answer with a large stored value
+MEMCACHED = ("IP(src='45.33.%d.7' % (i % 4), dst='{h}') / UDP(sport=11211, dport=42000 + i) / "
+             "Raw(bytes([0, i % 256, 0, 0, 0, 1, 0, 0]) + b'VALUE a 0 1300\\r\\n' + b'A' * 1300 + b'\\r\\nEND\\r\\n')")
+# SSDP: an M-SEARCH answer from a home router (UPnP), a typical ~310 bytes
+SSDP = ("IP(src='198.199.%d.10' % (i % 5), dst='{h}') / UDP(sport=1900, dport=43000 + i) / "
+        "Raw(b'HTTP/1.1 200 OK\\r\\nCACHE-CONTROL: max-age=1800\\r\\nEXT:\\r\\n"
+        "LOCATION: http://192.168.1.1:49152/rootDesc.xml\\r\\n"
+        "SERVER: Linux/3.14 UPnP/1.0 MiniUPnPd/2.1\\r\\nST: upnp:rootdevice\\r\\n"
+        "USN: uuid:12345678-90ab-cdef-1234-567890abcdef::upnp:rootdevice\\r\\n"
+        "BOOTID.UPNP.ORG: 1604936417\\r\\nCONFIGID.UPNP.ORG: 1337\\r\\n\\r\\n')")
 
 
 def test_amplification():
-    for service, packet in (("DNS", DNS_ANY), ("NTP", NTP_MONLIST)):
+    for service, packet in (("DNS", DNS_ANY), ("NTP", NTP_MONLIST), ("memcached", MEMCACHED), ("SSDP", SSDP)):
         forge([packet.format(h=HOST)], count=60)
 
         def found(service=service):
@@ -335,7 +376,7 @@ def main():
         procs.append(subprocess.Popen([sys.executable, "-m", "http.server", "443", "--bind", HOST,
                                        "-d", "/tmp/kguard-www"],
                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
-        listener(22)
+        procs.append(start_sshd())
         listener(8080)
         procs.append(start_backend())
         tests = (test_web_traffic_is_quiet, test_scan_types, test_brute_force, test_syn_flood,

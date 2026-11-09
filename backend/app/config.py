@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     # Repeated new connections to login/database ports raise BRUTE_FORCE
     brute_force_ports: List[int] = [21, 22, 23, 25, 110, 143, 445, 1433, 3306, 3389, 5432, 5900, 6379, 27017]
     brute_force_threshold: int = 10
+    # ...within this many seconds. Longer than the scan window: SSH allows several
+    # passwords per connection, so a brute force needs few connections a minute
+    brute_force_window_seconds: int = 300
     # Half-open connections to one destination that make a SYN flood
     syn_flood_threshold: int = 200
     syn_flood_window_seconds: int = 10
@@ -88,7 +91,8 @@ class Settings(BaseSettings):
     bogon_detection: bool = True
     # Amplification (AMPLIFICATION): UDP replies from reflector ports
     # (DNS, NTP, memcached, SSDP, ...) of at least amplification_min_bytes
-    amplification_min_bytes: int = 400
+    # (200: SSDP answers are typically 250-350 bytes; only unsolicited replies count)
+    amplification_min_bytes: int = 200
     # Unsolicited replies to one destination within the window
     amplification_threshold: int = 50
     amplification_window_seconds: int = 10

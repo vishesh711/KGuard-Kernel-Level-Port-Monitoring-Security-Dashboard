@@ -19,7 +19,9 @@ flood the alert list):
 - HIGH_FREQUENCY: more than `high_frequency_threshold` connection attempts
   per minute (left to the kernel for this server when it detects).
 - BRUTE_FORCE: at least `brute_force_threshold` new connections to one
-  login/database port (`brute_force_ports`) within the window.
+  login/database port (`brute_force_ports`) within
+  `brute_force_window_seconds` (5 minutes: SSH takes several passwords per
+  connection, so hydra needs only ~10 connections a minute).
 - SUSPICIOUS_PORT: a connection attempt to a port in `suspicious_ports`
   (skipped for sources already reported as scanners).
 - SYN_FLOOD: at least `syn_flood_threshold` half-open connections (SYN seen,
@@ -59,6 +61,8 @@ TCP_ACK = ACK
 
 # Most event IDs stored on one alert
 MAX_RELATED_EVENT_IDS = 100
+# Most connection attempts remembered per source and login port
+MAX_LOGIN_ATTEMPTS = 1000
 # Most half-open connections remembered per destination
 MAX_PENDING_PER_DESTINATION = 200_000
 
@@ -185,6 +189,9 @@ class AnomalyDetectorService:
         self.high_frequency_threshold = settings.high_frequency_threshold
         self.brute_force_ports = set(settings.brute_force_ports)
         self.brute_force_threshold = settings.brute_force_threshold
+        self.brute_force_window = float(settings.brute_force_window_seconds)
+        # Connection attempts per (source, login port), kept for the brute-force window
+        self.logins: Dict[tuple, Deque[Probe]] = {}
         self.syn_flood_threshold = settings.syn_flood_threshold
         self.window_seconds = float(settings.detection_window_seconds)
         self.max_attempts_per_source = settings.max_attempts_per_source
@@ -225,6 +232,7 @@ class AnomalyDetectorService:
     def reset(self) -> None:
         """Forget all remembered activity and cooldowns"""
         self.windows.clear()
+        self.logins.clear()
         self.recent_alerts.clear()
         self.floods.pending.clear()
         self.spoofing.reset()
@@ -431,9 +439,16 @@ class AnomalyDetectorService:
     def _check_brute_force(self, key: str, src_ip: str, window: Deque[Probe],
                            new_probes: List[Probe]) -> List[SecurityAlert]:
         alerts = []
-        ports = {p.dst_port for p in new_probes if p.kind == "syn" and p.dst_port in self.brute_force_ports}
+        ports = set()
+        for p in new_probes:
+            if p.kind == "syn" and p.dst_port in self.brute_force_ports:
+                attempts = self.logins.setdefault((key, p.dst_port), deque(maxlen=MAX_LOGIN_ATTEMPTS))
+                attempts.append(p)
+                while attempts and attempts[0].time < p.time - self.brute_force_window:
+                    attempts.popleft()
+                ports.add(p.dst_port)
         for port in ports:
-            attempts = [p for p in window if p.kind == "syn" and p.dst_port == port]
+            attempts = list(self.logins[(key, port)])
             if len(attempts) < self.brute_force_threshold:
                 continue
             cooldown = f"brute_force_{key}_{port}"
@@ -640,6 +655,9 @@ class AnomalyDetectorService:
         ]
         for src in idle_sources:
             del self.windows[src]
+        login_cutoff = now.timestamp() - self.brute_force_window
+        for k in [k for k, a in self.logins.items() if not a or a[-1].time < login_cutoff]:
+            del self.logins[k]
         self.floods.forget_idle(now.timestamp())
 
         if expired_keys or idle_sources:

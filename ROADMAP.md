@@ -29,16 +29,16 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
 
 - [x] **F0.1 Update Python dependencies.** Unpin versions that fail on Python 3.12/3.13; remove unused packages (Celery, pandas, numpy) unless a later task uses them.
   *Done when:* `pip install -r backend/requirements.txt` works on Python 3.12 and 3.13.
-  *Status:* Done. Runtime and dev requirements split; 35 backend tests pass on Python 3.11, 3.12 and 3.13.
+  *Status:* Done. Runtime and dev requirements split; the backend suite (170 tests) passes on Python 3.11, 3.12 and 3.13 in CI.
 - [x] **F0.2 Backend test setup.** Add `backend/tests/` with pytest, a temporary SQLite database fixture and a FastAPI test client.
   *Done when:* `pytest` runs and passes one smoke test.
-  *Status:* Done. 35 tests across collector, detection, alerts, events, health and WebSocket; 84% coverage.
+  *Status:* Done. pytest with a temporary SQLite database and the FastAPI test client; 170 tests.
 - [x] **F0.3 Fake kernel source.** Make the `/proc/kguard` path configurable in tests and add a fixture that writes sample event JSON, so the backend can be tested without the module.
   *Done when:* a test feeds 50 fake events through the collector into the database.
   *Status:* Done. `tests/conftest.py` writes events in the exact `/proc/kguard` format.
 - [x] **F0.4 Frontend checks.** Make `npm run lint` and `npm run build` pass; add Vitest with one component test.
   *Done when:* all three commands pass locally.
-  *Status:* Done. ESLint config added, Jest replaced by Vitest (9 tests), build passes.
+  *Status:* Done. ESLint, Prettier and Vitest (14 tests); `npm run build` passes, in CI too.
 - [x] **F0.5 Kernel build check.** Add `kernel/` build to CI against the runner's kernel headers, with `-Werror`.
   *Done when:* CI fails on any kernel compiler warning.
   *Status:* Done. `-Werror` in the kernel Makefile; builds clean against 6.8 headers.
@@ -86,25 +86,25 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
 
 - [x] **K2.1 Safe packet parsing.** Use `skb_header_pointer()` for IP/TCP/UDP headers; handle IP options (`ihl`), fragments and non-linear packets.
   *Done when:* fragmented and option-carrying packets are parsed correctly (test packets from scapy).
-  *Status:* Done. skb_header_pointer() for TCP/UDP, IP options via ip_hdrlen(), IPv6 extension headers via ipv6_skip_exthdr(), non-first fragments flagged.
+  *Status:* Done. skb_header_pointer() for TCP/UDP, IP options via ip_hdrlen(), IPv6 extension headers via ipv6_skip_exthdr(), non-first fragments flagged with no ports. Verified with scapy-built packets (kernel/tests/vm_tests.py test_tricky_packets): IPv4 options, IPv4 and IPv6 fragments, hop-by-hop and destination-option headers, a truncated TCP header. Conntrack's defragmenter runs before the capture hooks, so IPv4 fragments arrive reassembled; IPv6 fragments that already carry a conntrack entry (loopback) arrive as fragments, and the test checks both shapes.
 - [x] **K2.2 Wider coverage.** Hook `LOCAL_IN`, `LOCAL_OUT` and `FORWARD`; add IPv6 (`NFPROTO_IPV6`, extension headers). Add a direction field to events.
   *Done when:* events show in/out/forward for IPv4 and IPv6.
   *Status:* Done. LOCAL_IN, LOCAL_OUT and FORWARD for IPv4 and IPv6; events carry direction and interface. Verified.
 - [x] **K2.3 Per-CPU lock-free ring buffer.** One single-producer ring per CPU, `smp_store_release` / `smp_load_acquire` for indices, no spinlock in the packet path. Size set by module parameter.
   *Done when:* the packet path takes no locks; a stress test on all CPUs passes under lockdep and KCSAN.
-  *Status:* Done. One single-producer ring per CPU, interrupts off only for the write, acquire/release on head and tail. Verified: 40,000 events at 5,000/s, zero drops; strict checkpatch clean.
+  *Status:* Done. One single-producer ring per CPU, interrupts off only for the write, acquire/release on head and tail. Verified: 40,000 events at 5,000/s with zero drops; and the whole suite on a 6.8 kernel built with lockdep, KCSAN and kmemleak (kernel/tests/debug_kernel.sh) reports no lock-order problem or data race involving kguard. That run found a real bug, fixed: naming the sender with get_task_comm() took task_lock under a softirq-safe socket lock (possible deadlock); the name is now copied lock-free.
 - [x] **K2.4 Character device with mmap.** `/dev/kguard`: userspace maps the rings read-only (`remap_vmalloc_range`), sleeps in `poll()` on a wait queue, and moves its own read index. Keep `/proc/kguard` as a text debug view.
   *Done when:* a small C reader gets events with no `read()` copies and no busy polling.
   *Status:* Done. Exclusive open, MAP_SHARED mapping via remap_vmalloc_range(), poll() wait queue. Verified with tools/kguard_reader.c: idle reader uses ~0.05 s CPU over 3 s with zero wakeups.
 - [x] **K2.5 Binary event format.** Fixed-size, versioned struct shared through a UAPI header (`include/uapi/kguard.h`), with real-time timestamps (`ktime_get_real_ns`).
   *Done when:* the Python collector parses the struct with `struct.unpack`, and timestamps match wall-clock time.
-  *Status:* Done. 96-byte versioned struct in include/uapi/linux/kguard.h; backend decodes it with struct.
+  *Status:* Done. Versioned struct in include/uapi/linux/kguard.h, now ABI 2: 128 bytes (two cache lines) with TTL, IP length, TCP window and SYN options; real-time timestamps. Python readers decode it with the struct format documented in the header (checked by backend/tests/test_kernel_abi.py).
 - [x] **K2.6 Generic Netlink control channel.** Commands: get stats, set thresholds, add/remove block entries. Multicast group for alerts.
   *Done when:* a `kguardctl` CLI (or `pyroute2` script) can change thresholds live.
-  *Status:* Done. Family "kguard": GET_STATS, GET_CONFIG, SET_CONFIG (CAP_NET_ADMIN), multicast notification on change. CLI: tools/kguardctl.py. Thresholds arrive with Phase 3.
+  *Status:* Done. Family "kguard": stats, configuration (thresholds, enforce, capture switches) with multicast change notification, block/allow list add/remove/list, alert multicast. CAP_NET_ADMIN for changes. CLI: tools/kguardctl.py. Verified live changes and that non-root users are refused.
 - [x] **K2.7 Process attribution.** On outgoing traffic, map `skb->sk` to the owning process (PID, command name, UID); for incoming connections, record the listening socket's owner.
   *Done when:* a `curl` shows as `curl` with its PID, and an `nc -l 4444` listener shows as `nc`.
-  *Status:* Done. Sender PID/name from process context; socket owner UID and inode for incoming TCP/UDP (listener lookup); backend resolves inode to process. Verified with curl and nc.
+  *Status:* Done. Sender PID/name in process context; socket owner UID and inode for incoming TCP/UDP (listener lookup); backend resolves the inode to the process. Verified with curl and an nc listener. The name copy is lock-free (see K2.3).
 - [x] **K2.8 Connection tracking.** Read conntrack state (NEW, ESTABLISHED, RELATED, INVALID) for each packet when `nf_conntrack` is loaded.
   *Done when:* events carry connection state, and INVALID packets are counted.
   *Status:* Done. nf_ct_get() state, conntrack enabled per namespace with nf_ct_netns_get(); a SYN+FIN packet is reported INVALID. Verified.
@@ -116,13 +116,13 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
   *Status:* Done. Seven module parameters; debugfs stats, rings and config; hook cost sampled 1 in 64 packets.
 - [x] **K2.11 Module tracepoints.** Add `TRACE_EVENT`s for drops and detections so `perf` and `trace-cmd` can observe the module.
   *Done when:* `perf record -e kguard:*` shows events.
-  *Status:* Done. kguard:kguard_event and kguard:kguard_ring_full; verified through tracefs (perf uses the same events).
+  *Status:* Done. kguard:kguard_event, kguard:kguard_ring_full and kguard:kguard_alert. Verified with `perf record -e 'kguard:*'` (perf 6.8) and through tracefs.
 
 ## Phase 3 — In-kernel detection and firewall
 
 - [x] **K3.1 Per-source state table.** `rhashtable` keyed by source IP, with RCU-protected lookups in the packet path, timer- or LRU-based expiry and a memory cap.
   *Done when:* 1M distinct sources don't exceed the memory cap, checked with kmemleak.
-  *Status:* Done. rhashtable keyed by (address, netns), RCU lookups, per-source spinlock, max_sources cap, GC worker with kfree via call_rcu and an unmerged slab cache. Verified: 20,000 spoofed sources keep the table at 1,000 (1,003 slab objects), idle state freed, no leaks at unload. kmemleak is not enabled on the test kernel (P8.3).
+  *Status:* Done. rhashtable keyed by (address, netns), RCU lookups, per-source spinlock, max_sources cap, GC on the unbound workqueue, frees via call_rcu into an unmerged slab cache. Verified: 1,000,000 spoofed sources (delivery proven by the module's packet counter) keep the table under the default cap of 65,536; 20,000 sources against a cap of 1,000 stay at 1,000 slab objects; idle state is freed; kmemleak on the debug kernel finds no kguard object after the whole suite and unloading.
 - [x] **K3.2 In-kernel scan detection.** Track distinct destination ports per source in a time window (bitmap or HyperLogLog); emit an alert event over Netlink.
   *Done when:* `nmap -sS` triggers an alert within 1 second.
   *Status:* Done. 1024-bit distinct-port bitmap per source per window; alert over Netlink multicast and tracepoint. Verified: nmap -sS from another namespace detected 21 ms after its first SYN.
@@ -140,7 +140,7 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
 
 - [x] **X4.1 eBPF capture.** XDP program for incoming packets and TC program for outgoing, written with libbpf and CO-RE (BTF); events go to a `BPF_MAP_TYPE_RINGBUF`.
   *Done when:* the same event format as K2.5 comes out of the eBPF path.
-  *Status:* Done. agent/bpf/kguard.bpf.c: XDP ingress + TC clsact egress, BPF ring buffer of the same 96-byte struct kguard_event, CO-RE with partial preserve_access_index structs (no vmlinux.h). Verified on 6.8: 10,000/10,000 packets each way, nothing lost.
+  *Status:* Done. agent/bpf/kguard.bpf.c: XDP ingress + TC clsact egress, BPF ring buffer of the same 128-byte struct kguard_event (ABI 2, with the SYN option parser), CO-RE with partial preserve_access_index structs (no vmlinux.h). Verified on 6.8: 10,000/10,000 packets each way, nothing lost.
 - [x] **X4.2 eBPF process tracking.** Probes on `tcp_v4_connect`, `inet_csk_accept` and the `sock:inet_sock_set_state` tracepoint, mapping connections to PID and command.
   *Done when:* matches the K2.7 output for the same test.
   *Status:* Done. fentry tcp_connect, fexit inet_csk_accept (via bpf_get_func_ret, signature-independent), fexit inet_listen/inet_bind/inet6_bind, fentry udp_sendmsg, tp_btf inet_sock_set_state; existing listeners seeded from /proc/net at start-up. Verified: curl, nc listeners started before and after the agent, first UDP datagram.
@@ -161,13 +161,13 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
   *Status:* Done. 80 and 443 removed from the default SUSPICIOUS_PORTS; TRUSTED_SOURCES (CIDRs) skips detection. Verified in scripts/detection_lab.py: 30 web requests to port 443 raise no alerts.
 - [x] **N5.1 Scan types from TCP flags.** Classify SYN, FIN, NULL, Xmas, ACK and Maimon scans, and UDP scans (from ICMP port-unreachable replies).
   *Done when:* each `nmap` scan type (`-sS -sF -sN -sX -sA -sU`) produces the correctly labeled alert.
-  *Status:* Done. Probe types classified from TCP flags plus conntrack state (backend/app/services/probes.py, signatures observed for every nmap type on Linux 6.8); alerts are titled by scan type. SYN/UDP come from the kernel guard (labelled from events), stealth scans from the backend. Verified: nmap -sS -sF -sN -sX -sA -sM -sU each give the right label.
+  *Status:* Done. Probe types classified from TCP flags plus conntrack state (backend/app/services/probes.py, signatures observed for every nmap type on Linux 6.8); alerts are titled by scan type. UDP scans are recognised from the UDP probes themselves (new-connection UDP to many ports), not from ICMP replies. SYN/UDP come from the kernel guard (labelled from events up to the alert's time), stealth scans from the backend. Verified: nmap -sS -sF -sN -sX -sA -sM -sU each give the right label.
 - [x] **N5.2 SYN flood.** Track half-open connections per destination; note whether SYN cookies are on (`net.ipv4.tcp_syncookies`).
   *Done when:* `hping3 --flood -S` raises a SYN flood alert.
   *Status:* Done. Half-open connections per destination (SYN without a completing ACK) whatever the source, so spoofed random-source floods are caught; alert includes net.ipv4.tcp_syncookies. Verified: hping3 -S --flood --rand-source raises SYN_FLOOD.
 - [x] **N5.3 Brute force.** Repeated short connections to SSH, RDP or database ports from one source in a window.
   *Done when:* a `hydra` run against SSH raises a `BRUTE_FORCE` alert.
-  *Status:* Done. Repeated new connections to login/database ports (BRUTE_FORCE_PORTS, threshold 10 per window). Verified with 15 rapid connections to port 22 (hydra is not available in the test VM).
+  *Status:* Done. Repeated new connections to login/database ports (BRUTE_FORCE_PORTS): 10 within BRUTE_FORCE_WINDOW_SECONDS (300). Verified with hydra against a real sshd (scripts/detection_lab.py). That test found a gap, fixed: SSH takes several passwords per connection, so hydra made 15 connections in 103 s and slipped under the old 60-second window.
 - [x] **N5.4 Passive OS fingerprinting.** Guess the sender's OS from initial TTL, window size, MSS and TCP option order on SYN packets (p0f-style signatures).
   *Done when:* Linux, Windows and macOS hosts are recognized in the test lab.
   *Status:* Done. Event ABI v2 (128 bytes) carries TTL, IP length, DF, TCP window and, for SYNs, MSS, window scale and option order, filled by both the kernel module and the eBPF program (bounded option loop accepted by the verifier). backend/app/services/fingerprint.py matches p0f-style signatures (Linux, Windows, macOS, FreeBSD, OpenBSD) and scanning tools (nmap, masscan, zmap, crafted); events store os_guess and alerts name the sender. Verified in scripts/detection_lab.py: a real Linux SYN (curl) is recognised as Linux; Windows and macOS are recognised from their SYN signatures replayed with scapy (no Windows/macOS machines in the test VM); nmap -sS is named nmap.
@@ -176,7 +176,7 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
   *Status:* Done. Kernel guard (PRE_ROUTING, before the allowlist): loopback, own-address and martian sources on a real interface raise KGUARD_ALERT_SPOOF with reason and interface, one per reason per 10 s counting packets, dropped when enforcing. Backend: TTL jumps per source (same initial TTL, ignoring scanner-crafted packets and known scanners) and bogon sources aggregated per category. "Unexpected interface" is covered by the kernel check for this host's own addresses. Verified: scapy-forged 127.0.0.1, own-address, multicast, 198.18.0.7 and TTL-shifted packets are flagged (kernel guard tests and detection lab).
 - [x] **N5.6 Amplification attacks.** Detect DNS (ANY), NTP (monlist), memcached and SSDP reflection: large responses to small requests, or unsolicited responses.
   *Done when:* replayed amplification captures raise alerts.
-  *Status:* Done. Victim side: unsolicited (conntrack new/invalid, or no query seen without conntrack) large UDP replies from reflector ports per destination and service; reflector side: this host's UDP service replying with many times the request bytes. Verified with scapy replays of DNS ANY answers (1412 bytes) and NTP monlist pages (468 bytes), and a host service amplifying 39x. memcached and SSDP use the same rule with their ports; not replayed separately.
+  *Status:* Done. Victim side: unsolicited (conntrack new/invalid, or no query seen without conntrack) UDP replies of at least 200 bytes from reflector ports, per destination and service; reflector side: this host's UDP service replying with many times the request bytes. Verified with scapy replays of DNS ANY answers, NTP monlist pages, memcached get answers and SSDP M-SEARCH answers (all four raise AMPLIFICATION), and a host service amplifying 39x. Writing the SSDP replay found that the old 400-byte minimum missed typical SSDP answers (250-350 bytes); lowered to 200.
 - [x] **N5.7 DNS tunneling.** Parse DNS queries; score long, high-entropy subdomains and unusual record types (TXT, NULL).
   *Done when:* an `iodine` or `dnscat2` session is detected, with a measured false-positive rate on normal browsing.
   *Status:* Done. The eBPF agent samples DNS messages (separate payload ring buffer); the backend parses them (compression- and loop-safe), stores each lookup with its process, and scores lookups per client and registered domain: name length, random-looking names, uniqueness, TXT/NULL types (DNS_TUNNELING). Verified: a real iodine tunnel (NULL records) raises DNS_TUNNELING, attributed to the iodine process (scripts/payload_lab.py). False positives: none on real hostnames (500 top sites and ~6,000 third-party hosts from Ghostery's tracker database) in a simulated 8-hour browsing session (36,000 lookups) or with every hostname at once; the closest domain scored 0.31 against 0.6 (scripts/dns_fp_eval.py). The browsing pattern is modelled (no Internet in the test environment); dnscat2 was not available.

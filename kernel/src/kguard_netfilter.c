@@ -260,7 +260,15 @@ static void kguard_set_owner(struct sk_buff *skb,
 	 */
 	if (ev->direction == KGUARD_DIR_OUT && in_task() && sk) {
 		ev->pid = task_tgid_nr(current);
-		get_task_comm(ev->comm, current);
+		/*
+		 * Lock-free copy, as bpf_get_current_comm() does. Before 6.13,
+		 * get_task_comm() takes task_lock(), which may be held with
+		 * softirqs enabled, while the stack can call this hook holding
+		 * a socket spinlock that softirqs also take (lockdep: closing a
+		 * listener sends RSTs under slock): a deadlock. A rename racing
+		 * with the copy can only give a mixed name; it stays terminated.
+		 */
+		strscpy_pad(ev->comm, current->comm, sizeof(ev->comm));
 		ev->info |= KGUARD_EVF_PROC;
 	}
 

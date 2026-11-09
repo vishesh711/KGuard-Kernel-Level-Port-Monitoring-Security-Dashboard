@@ -112,7 +112,7 @@ alert list. Sources in `TRUSTED_SOURCES` (CIDRs) are never alerted on.
 | Alert | What triggers it | Settings |
 |---|---|---|
 | `PORT_SCAN` | One probe type (SYN, UDP, FIN, NULL, Xmas, ACK, Maimon) to many ports; the title names the scan type | `PORT_SCAN_THRESHOLD`, `DETECTION_WINDOW_SECONDS` |
-| `BRUTE_FORCE` | Repeated new connections to one login/database port | `BRUTE_FORCE_PORTS`, `BRUTE_FORCE_THRESHOLD` |
+| `BRUTE_FORCE` | Repeated new connections to one login/database port (over minutes: SSH takes several passwords per connection) | `BRUTE_FORCE_PORTS`, `BRUTE_FORCE_THRESHOLD`, `BRUTE_FORCE_WINDOW_SECONDS` |
 | `SUSPICIOUS_PORT` | A connection attempt to a listed port | `SUSPICIOUS_PORTS` |
 | `HIGH_FREQUENCY` | Too many connection attempts per minute from one source | `HIGH_FREQUENCY_THRESHOLD` |
 | `SYN_FLOOD` | Half-open connections to one destination, whatever their sources | `SYN_FLOOD_THRESHOLD`, `SYN_FLOOD_WINDOW_SECONDS` |

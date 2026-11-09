@@ -160,17 +160,21 @@ class KGuardDevice:
         """Consume waiting events from every ring, oldest first"""
         raw = []
         mask = self.slots - 1
+        # With a limit, each ring gets an equal share, so a busy CPU cannot starve the others
+        per_ring = -(-limit // self.nr_rings) if limit else None
         for n in range(self.nr_rings):
+            taken = 0
             base = self.rings_offset + n * self.stride
             (head,) = struct.unpack_from("<Q", self.mm, base + HEAD_OFFSET)
             (tail,) = struct.unpack_from("<Q", self.mm, base + TAIL_OFFSET)
             if head - tail > self.slots:  # bogus tail left by an earlier reader
                 tail = head
             data = base + self.header_size
-            while tail != head and (limit is None or len(raw) < limit):
+            while tail != head and (per_ring is None or taken < per_ring):
                 offset = data + (tail & mask) * self.event_size
                 raw.append(self.mm[offset:offset + self.event_size])
                 tail += 1
+                taken += 1
             struct.pack_into("<Q", self.mm, base + TAIL_OFFSET, tail)
         events = [decode_event(r) for r in raw]
         events.sort(key=lambda e: e["timestamp"])
