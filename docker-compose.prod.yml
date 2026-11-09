@@ -19,6 +19,8 @@ services:
       - DATABASE_URL=postgresql+psycopg://kguard:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/kguard
       - LOG_LEVEL=INFO
       - LOG_FILE=/app/logs/kguard.log
+      # Detection windows and cooldowns survive restarts (S6.2)
+      - REDIS_URL=redis://redis:6379/0
       # Signs login tokens; the backend refuses to start without a strong one
       - SECRET_KEY=${SECRET_KEY:?set SECRET_KEY (openssl rand -hex 32)}
       # First admin, created on first start only (or: python -m app.users create)
@@ -43,7 +45,7 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     # Kernel access without root or CAP_NET_ADMIN: load the module with
     #   sudo insmod kernel/kguard.ko reader_gid=1500
     # and members of that group may read /proc/kguard and consume events from

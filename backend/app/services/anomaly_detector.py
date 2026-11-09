@@ -40,7 +40,7 @@ Sources in `trusted_sources` are never alerted on.
 
 import ipaddress
 import logging
-from collections import Counter, OrderedDict, defaultdict, deque
+from collections import Counter, OrderedDict, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -51,6 +51,7 @@ from ..database import SessionLocal
 from ..models.network_event import NetworkEvent
 from ..models.security_alert import AlertSeverity, AlertType, SecurityAlert
 from .amplification import AmplificationDetector
+from .detection_state import DetectionState
 from .probes import ACK, CONNECTION_PROBES, LABELS, SYN, classify_probe
 from .spoofing import SpoofingDetector
 
@@ -190,8 +191,6 @@ class AnomalyDetectorService:
         self.brute_force_ports = set(settings.brute_force_ports)
         self.brute_force_threshold = settings.brute_force_threshold
         self.brute_force_window = float(settings.brute_force_window_seconds)
-        # Connection attempts per (source, login port), kept for the brute-force window
-        self.logins: Dict[tuple, Deque[Probe]] = {}
         self.syn_flood_threshold = settings.syn_flood_threshold
         self.window_seconds = float(settings.detection_window_seconds)
         self.max_attempts_per_source = settings.max_attempts_per_source
@@ -200,8 +199,9 @@ class AnomalyDetectorService:
         # Kept for analyze_historical_patterns callers
         self.detection_window = timedelta(seconds=settings.detection_window_seconds)
 
-        # Recent probes per (host, source)
-        self.windows: Dict[str, Deque[Probe]] = {}
+        # Sliding windows (recent probes per source, and per source and login
+        # port) and alert cooldowns: in Redis when REDIS_URL is set (S6.2)
+        self.state = DetectionState(settings.redis_url)
         self.floods = FloodTracker(float(settings.syn_flood_window_seconds))
         self.spoofing = SpoofingDetector(self)
         self.amplification = AmplificationDetector(self)
@@ -210,8 +210,6 @@ class AnomalyDetectorService:
         # SYN-rate abuse itself (see kernel_alerts.py)
         self.kernel_detection = False
 
-        # Last alert time per rule and source, to rate-limit alerts
-        self.recent_alerts: Dict[str, datetime] = {}
 
         self.stats = {
             "events_analyzed": 0,
@@ -231,9 +229,7 @@ class AnomalyDetectorService:
 
     def reset(self) -> None:
         """Forget all remembered activity and cooldowns"""
-        self.windows.clear()
-        self.logins.clear()
-        self.recent_alerts.clear()
+        self.state.clear()
         self.floods.pending.clear()
         self.spoofing.reset()
         self.amplification.reset()
@@ -290,7 +286,6 @@ class AnomalyDetectorService:
             probe = Probe(time=t, kind=kind, dst_ip=event.dst_ip, dst_port=event.dst_port, event_id=event.id,
                           os_guess=getattr(event, "os_guess", None))
             batch[key].append(probe)
-            self._remember(key, probe)
 
         self.stats["probes"] += sum(len(p) for p in batch.values())
         self.stats["connection_attempts"] += sum(
@@ -300,7 +295,8 @@ class AnomalyDetectorService:
         alerts: List[SecurityAlert] = []
         try:
             for key, new_probes in batch.items():
-                window = self.windows.get(key)
+                window = [Probe(**p) for p in self.state.add(
+                    f"src:{key}", new_probes, self.window_seconds, self.max_attempts_per_source)]
                 if not window:
                     continue
                 src_ip, host_id = sources[key]
@@ -334,18 +330,6 @@ class AnomalyDetectorService:
             logger.info(f"Analyzed {len(events)} events, generated {len(stored)} alerts")
         return stored
 
-    def _remember(self, key: str, probe: Probe) -> None:
-        """Add a probe to its source's window and drop expired ones"""
-        window = self.windows.get(key)
-        if window is None:
-            window = deque(maxlen=self.max_attempts_per_source)
-            self.windows[key] = window
-        window.append(probe)
-
-        cutoff = probe.time - self.window_seconds
-        while window and window[0].time < cutoff:
-            window.popleft()
-
     def _check_port_scans(self, key: str, src_ip: str, window: Deque[Probe],
                           kernel_covers: bool) -> List[SecurityAlert]:
         ports_by_kind: Dict[str, set] = defaultdict(set)
@@ -359,7 +343,7 @@ class AnomalyDetectorService:
             if kernel_covers and kind in CONNECTION_PROBES:
                 continue  # this server's kernel reports SYN and UDP scans
             cooldown = f"port_scan_{key}_{kind}"
-            if self._is_in_cooldown(cooldown):
+            if not self._claim_cooldown(cooldown):
                 continue
 
             probes = [p for p in window if p.kind == kind]
@@ -387,7 +371,6 @@ class AnomalyDetectorService:
                 **sender_fingerprint(p.os_guess for p in probes),
             }
             alert.description += fingerprint_text(alert.alert_metadata)
-            self._start_cooldown(cooldown)
             # Also silences per-port SUSPICIOUS_PORT alerts for this scanner
             self._start_cooldown(f"port_scan_{key}")
             self.stats["port_scans_detected"] += 1
@@ -402,7 +385,7 @@ class AnomalyDetectorService:
             return []
 
         cooldown = f"high_freq_{key}"
-        if self._is_in_cooldown(cooldown):
+        if not self._claim_cooldown(cooldown):
             return []
 
         span = attempts[-1].time - attempts[0].time
@@ -431,7 +414,6 @@ class AnomalyDetectorService:
             },
         )
 
-        self._start_cooldown(cooldown)
         self.stats["high_frequency_detected"] += 1
         logger.warning(f"High frequency connections from {src_ip}: {per_minute:.0f}/min")
         return [alert]
@@ -439,20 +421,17 @@ class AnomalyDetectorService:
     def _check_brute_force(self, key: str, src_ip: str, window: Deque[Probe],
                            new_probes: List[Probe]) -> List[SecurityAlert]:
         alerts = []
-        ports = set()
+        by_port: Dict[int, List[Probe]] = defaultdict(list)
         for p in new_probes:
             if p.kind == "syn" and p.dst_port in self.brute_force_ports:
-                attempts = self.logins.setdefault((key, p.dst_port), deque(maxlen=MAX_LOGIN_ATTEMPTS))
-                attempts.append(p)
-                while attempts and attempts[0].time < p.time - self.brute_force_window:
-                    attempts.popleft()
-                ports.add(p.dst_port)
-        for port in ports:
-            attempts = list(self.logins[(key, port)])
+                by_port[p.dst_port].append(p)
+        for port, probes in by_port.items():
+            attempts = [Probe(**a) for a in self.state.add(
+                f"login:{key}|{port}", probes, self.brute_force_window, MAX_LOGIN_ATTEMPTS)]
             if len(attempts) < self.brute_force_threshold:
                 continue
             cooldown = f"brute_force_{key}_{port}"
-            if self._is_in_cooldown(cooldown):
+            if not self._claim_cooldown(cooldown):
                 continue
             span = attempts[-1].time - attempts[0].time
             alerts.append(SecurityAlert(
@@ -477,7 +456,6 @@ class AnomalyDetectorService:
                 },
             ))
             alerts[-1].description += fingerprint_text(alerts[-1].alert_metadata)
-            self._start_cooldown(cooldown)
             self.stats["brute_force_detected"] += 1
             logger.warning(f"Possible brute force from {src_ip} on port {port}: {len(attempts)} connections")
         return alerts
@@ -488,7 +466,7 @@ class AnomalyDetectorService:
         if half_open < self.syn_flood_threshold:
             return None
         cooldown = f"syn_flood_{host_id}|{dst_ip}|{dst_port}"
-        if self._is_in_cooldown(cooldown):
+        if not self._claim_cooldown(cooldown):
             return None
 
         cookies = syn_cookies_enabled() if host_id is None else None
@@ -499,7 +477,6 @@ class AnomalyDetectorService:
         }.get(cookies, "")
         window = self.floods.window_seconds
         meta = sender_fingerprint(self.floods.fingerprints(dest))
-        self._start_cooldown(cooldown)
         self.stats["syn_floods_detected"] += 1
         logger.warning(f"SYN flood against {dst_ip}:{dst_port}: {half_open} half-open from {sources} sources")
         return SecurityAlert(
@@ -536,7 +513,7 @@ class AnomalyDetectorService:
                 continue
 
             cooldown = f"suspicious_port_{key}_{probe.dst_port}"
-            if self._is_in_cooldown(cooldown):
+            if not self._claim_cooldown(cooldown):
                 continue
 
             alerts.append(
@@ -547,7 +524,6 @@ class AnomalyDetectorService:
                     event_ids=[probe.event_id] if probe.event_id is not None else [],
                 )
             )
-            self._start_cooldown(cooldown)
             self.stats["suspicious_ports_detected"] += 1
             logger.warning(f"Suspicious port access: {src_ip} -> {probe.dst_ip}:{probe.dst_port}")
         return alerts
@@ -559,13 +535,15 @@ class AnomalyDetectorService:
         return ids[-MAX_RELATED_EVENT_IDS:]
 
     def _is_in_cooldown(self, alert_key: str) -> bool:
-        last_alert = self.recent_alerts.get(alert_key)
-        if last_alert is None:
-            return False
-        return datetime.utcnow() - last_alert < self.alert_cooldown
+        return self.state.in_cooldown(alert_key)
 
     def _start_cooldown(self, alert_key: str) -> None:
-        self.recent_alerts[alert_key] = datetime.utcnow()
+        self.state.start(alert_key, self.alert_cooldown.total_seconds())
+
+    def _claim_cooldown(self, alert_key: str) -> bool:
+        """Start the cooldown unless it is running; True if this call started it.
+        Atomic in Redis, so of several backend processes only one alerts."""
+        return self.state.claim(alert_key, self.alert_cooldown.total_seconds())
 
     def _store_alert(self, alert: SecurityAlert) -> bool:
         """Save an alert. Returns True on success."""
@@ -629,8 +607,7 @@ class AnomalyDetectorService:
             "detection_window_seconds": self.window_seconds,
             "suspicious_ports_count": len(self.suspicious_ports),
             "alert_cooldown_seconds": self.alert_cooldown.total_seconds(),
-            "active_cooldowns": len(self.recent_alerts),
-            "tracked_sources": len(self.windows),
+            "state": self.state.get_stats(),
             "tracked_flood_destinations": len(self.floods.pending),
             "brute_force_threshold": self.brute_force_threshold,
             "syn_flood_threshold": self.syn_flood_threshold,
@@ -639,31 +616,10 @@ class AnomalyDetectorService:
         }
 
     def cleanup_old_cooldowns(self) -> None:
-        """Drop expired cooldowns and sources with no recent activity"""
-        now = datetime.utcnow()
-        expired_keys = [
-            key for key, timestamp in self.recent_alerts.items()
-            if now - timestamp > self.alert_cooldown
-        ]
-        for key in expired_keys:
-            del self.recent_alerts[key]
-
-        cutoff = now.timestamp() - self.window_seconds
-        idle_sources = [
-            src for src, window in self.windows.items()
-            if not window or window[-1].time < cutoff
-        ]
-        for src in idle_sources:
-            del self.windows[src]
-        login_cutoff = now.timestamp() - self.brute_force_window
-        for k in [k for k, a in self.logins.items() if not a or a[-1].time < login_cutoff]:
-            del self.logins[k]
-        self.floods.forget_idle(now.timestamp())
-
-        if expired_keys or idle_sources:
-            logger.debug(
-                f"Cleaned up {len(expired_keys)} cooldowns and {len(idle_sources)} idle sources"
-            )
+        """Drop expired cooldowns and idle windows (Redis expires them by itself)"""
+        now = datetime.utcnow().timestamp()
+        self.state.forget_idle(now - max(self.window_seconds, self.brute_force_window))
+        self.floods.forget_idle(now)
 
 
 # Global instance

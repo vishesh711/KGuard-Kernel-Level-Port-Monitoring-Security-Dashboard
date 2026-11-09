@@ -78,6 +78,11 @@ class Settings(BaseSettings):
     # Agents (remote hosts). Enrollment is disabled while the key is empty.
     agent_enrollment_key: str = ""
 
+    # Detection state (S6.2): sliding windows and alert cooldowns in Redis,
+    # so a restart keeps them and several backend processes agree.
+    # Empty: kept in memory.
+    redis_url: str = ""
+
     # Response engine (S6.4). Blocks are always available from the API;
     # automatic blocking is off until AUTO_BLOCK=true.
     auto_block: bool = False

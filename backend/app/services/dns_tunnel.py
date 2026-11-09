@@ -132,9 +132,8 @@ class DnsTunnelDetector:
         if features["unique_ratio"] < MIN_UNIQUE_RATIO or features["score"] < self.threshold:
             return None
         cooldown = f"dns_tunnel_{host_id}|{client}|{domain}"
-        if self.detector._is_in_cooldown(cooldown):
+        if not self.detector._claim_cooldown(cooldown):
             return None
-        self.detector._start_cooldown(cooldown)
         self.detector.stats["dns_tunnels_detected"] += 1
         return self._alert(host_id, client, domain, queries, features)
 

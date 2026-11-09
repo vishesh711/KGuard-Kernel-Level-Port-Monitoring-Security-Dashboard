@@ -16,6 +16,9 @@ pydantic>=2.7,<3
 pydantic-settings>=2.3,<3
 python-dotenv>=1.0
 
+# Shared detection state (REDIS_URL)
+redis>=5.0
+
 # Login tokens (JWT, HS256)
 PyJWT>=2.8
 

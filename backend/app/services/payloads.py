@@ -266,9 +266,8 @@ class PayloadService:
 
     def _malicious_tls(self, row: TlsHandshake) -> Optional[SecurityAlert]:
         cooldown = f"malicious_tls_{row.host_id}|{row.client_ip}|{row.ja4}"
-        if anomaly_detector._is_in_cooldown(cooldown):
+        if not anomaly_detector._claim_cooldown(cooldown):
             return None
-        anomaly_detector._start_cooldown(cooldown)
         who = f"{row.process_name} on {row.client_ip}" if row.process_name and row.direction == "out" \
             else row.client_ip
         return SecurityAlert(

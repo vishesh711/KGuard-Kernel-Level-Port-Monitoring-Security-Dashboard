@@ -185,9 +185,8 @@ class SpoofingDetector:
         host_id, src_ip = key
         cooldown = f"spoof_ttl_{host_id}|{src_ip}"
         scanner = f"port_scan_{src_ip if host_id is None else f'{host_id}|{src_ip}'}"
-        if self.detector._is_in_cooldown(cooldown) or self.detector._is_in_cooldown(scanner):
+        if self.detector._is_in_cooldown(scanner) or not self.detector._claim_cooldown(cooldown):
             return None
-        self.detector._start_cooldown(cooldown)
         self.detector.stats["spoofing_detected"] += 1
 
         odd_hops = sorted({s[2] for s in odd})
@@ -220,9 +219,8 @@ class SpoofingDetector:
 
     def _bogon_alert(self, host_id, category, events) -> Optional[SecurityAlert]:
         cooldown = f"spoof_bogon_{host_id}|{category}"
-        if self.detector._is_in_cooldown(cooldown):
+        if not self.detector._claim_cooldown(cooldown):
             return None
-        self.detector._start_cooldown(cooldown)
         self.detector.stats["spoofing_detected"] += 1
         sources = sorted({e.src_ip for e in events})
         last = events[-1]
