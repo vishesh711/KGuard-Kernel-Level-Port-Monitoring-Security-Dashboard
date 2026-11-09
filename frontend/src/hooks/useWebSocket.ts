@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { ConnectionStatus, WebSocketMessage } from '../types'
 import toast from 'react-hot-toast'
+import { getToken } from '../lib/session'
 
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws'
 const RECONNECT_INTERVAL = 3000
@@ -94,7 +95,8 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
 
   const connect = useCallback(() => {
     try {
-      ws.current = new WebSocket(WS_URL)
+      // Browsers cannot set headers on a WebSocket: the token goes in the URL
+      ws.current = new WebSocket(`${WS_URL}?token=${encodeURIComponent(getToken() ?? '')}`)
 
       ws.current.onopen = () => {
         console.log('WebSocket connected')

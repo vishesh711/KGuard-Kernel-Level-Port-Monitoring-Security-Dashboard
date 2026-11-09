@@ -295,19 +295,54 @@ def test_module_engine():
 
 # ---------------------------------------------------------------- backend
 
+# The backend needs a signing key and every API call a login (roadmap S6.5);
+# the backend creates this admin on first start
+LAB_AUTH = {"SECRET_KEY": "lab-signing-key-" + "0" * 32, "ADMIN_USERNAME": "lab",
+            "ADMIN_PASSWORD": "lab-admin-password", "RATE_LIMIT_PER_MINUTE": "0",
+            "ALLOWED_HOSTS": json.dumps(["127.0.0.1", "localhost", HOST4])}
+_token = None
+
+
+def api_open(path, timeout=30):
+    """GET an API path as the lab admin (logs in on first use)"""
+    global _token
+    if _token is None:
+        login = json.dumps({"username": LAB_AUTH["ADMIN_USERNAME"], "password": LAB_AUTH["ADMIN_PASSWORD"]})
+        request = urllib.request.Request(API + "/api/auth/login", data=login.encode(),
+                                         headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=timeout) as r:
+            _token = json.loads(r.read())["access_token"]
+    return urllib.request.urlopen(urllib.request.Request(API + path, headers={"Authorization": f"Bearer {_token}"}),
+                                  timeout=timeout)
+
+
 def api(path):
-    with urllib.request.urlopen(API + path, timeout=5) as r:
+    with api_open(path) as r:
+        return json.loads(r.read())
+
+
+def api_send(method, path, body=None):
+    """POST/DELETE as the lab admin"""
+    api_open("/api/health/").close()  # logs in if needed
+    request = urllib.request.Request(API + path, method=method,
+                                     data=json.dumps(body).encode() if body is not None else None,
+                                     headers={"Authorization": f"Bearer {_token}",
+                                              "Content-Type": "application/json"})
+    # Generous: in the emulated VM the backend is busy storing the module agent's events
+    with urllib.request.urlopen(request, timeout=60) as r:
         return json.loads(r.read())
 
 
 class Backend:
-    def __init__(self):
+    def __init__(self, **extra_env):
         self.dir = tempfile.mkdtemp(prefix="kguard-backend-")
-        self.env = dict(os.environ,
+        self.env = dict(os.environ, **LAB_AUTH,
                         DATABASE_URL=f"sqlite:///{self.dir}/kguard.db",
                         KGUARD_SOURCE="device", KGUARD_DEVICE_PATH="/nonexistent",
                         PROC_KGUARD_PATH="/nonexistent", KERNEL_DETECTION="off",
                         AGENT_ENROLLMENT_KEY="lab-key", DEBUG="true")
+        # Agents enforce blocks unless a test asks the backend to
+        self.env.update({"LOCAL_ENFORCEMENT": "off", **extra_env})
         self.proc = None
 
     def start(self):
@@ -315,7 +350,8 @@ class Backend:
             [BACKEND_PY, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", str(PORT)],
             cwd=os.path.join(ROOT, "backend"), env=self.env,
             stdout=open(f"{self.dir}/backend.log", "a"), stderr=subprocess.STDOUT)
-        for _ in range(60):
+        # Up to 2 minutes: the test VM emulates the CPU, and start-up hashes the admin password
+        for _ in range(240):
             try:
                 api("/api/health/")
                 return
@@ -432,19 +468,152 @@ def test_backend_restart():
         sink.close()
 
 
+KGUARDCTL = [sys.executable, os.path.join(ROOT, "kernel", "tools", "kguardctl.py")]
+
+
+def reach_becomes(want, timeout=40):
+    return wait_for(lambda: reach() == want, timeout)
+
+
+def agent_sync_state():
+    agents = api("/api/response/status")["agents"]
+    return agents[0] if agents else {}
+
+
+def test_response_engine():
+    """S6.4: block and unblock from the API, enforced by eBPF (XDP) and module (Netlink) agents"""
+    load_module()
+    sh(KGUARDCTL + ["set", "enforce=1"])
+    backend = Backend(BLOCK_LEASE_SECONDS="20", AUTO_BLOCK="true", AUTO_BLOCK_MIN_SEVERITY="MEDIUM")
+    backend.start()
+    state = "/tmp/kguard-agent-edge"
+    agent = None
+
+    def run_agent(engine, *extra):
+        a = Agent("--engine", engine, "--server", API, "--state-dir", state, "--flush-ms", "200",
+                  "--sync-seconds", "2", *extra)
+        if not a.started():
+            raise RuntimeError("agent did not start: " + open(a.log.name).read()[-300:])
+        return a
+
+    try:
+        check("response: agent enrolls", enroll("edge", state).returncode == 0)
+
+        # --- eBPF engine: XDP drops what the backend lists
+        agent = run_agent("ebpf", "--iface", "kgv0")
+        check("response: attacker reaches the host before any block", reach())
+        block = api_send("POST", "/api/response/blocks", {"cidr": ATK4, "reason": "lab", "minutes": 60})
+        check("response: a block made through the API reaches the eBPF agent and XDP drops the attacker",
+              reach_becomes(False))
+        in_sync = wait_for(lambda: agent_sync_state().get("in_sync"))
+        sync = agent_sync_state()
+        check("response: the agent reports the list applied, nothing failed, enforcing",
+              in_sync and sync["failed"] == 0 and sync["enforcing"] is True, sync)
+        listing = sh([AGENT, "blocks"])
+        left = re.search(rf"{re.escape(ATK4)}/32\s+(\d+)s left", listing)
+        check("response: XDP holds it as a lease (at most BLOCK_LEASE_SECONDS)",
+              left and int(left.group(1)) <= 20, listing.strip())
+        check("response: IPv6 from the same attacker is unaffected", reach(v6=True))
+        api_send("DELETE", f"/api/response/blocks/{block['id']}")
+        check("response: unblocking through the API restores access", reach_becomes(True))
+        actions = [(e["actor"], e["action"]) for e in api("/api/response/audit")["items"]]
+        check("response: the audit log has both, with who did them",
+              actions[:2] == [("lab", "unblock"), ("lab", "block")], actions[:3])
+
+        # --- automatic rule: a scan blocks its source
+        in_ns(["nmap", "-sS", "-Pn", "-n", "-p", "1-200", "--max-retries", "0", HOST4])
+        auto = wait_for(lambda: [b for b in api("/api/response/blocks") if b["source"] == "auto"], 60)
+        blocks = api("/api/response/blocks")
+        check("response: a port scan blocks its source automatically",
+              auto and blocks[0]["cidr"] == f"{ATK4}/32" and "PORT_SCAN" in blocks[0]["reason"],
+              [(b["cidr"], b["reason"]) for b in blocks])
+        check("response: and the agent enforces it", reach_becomes(False))
+        for b in blocks:
+            api_send("DELETE", f"/api/response/blocks/{b['id']}")
+        check("response: unblocking the automatic block restores access", reach_becomes(True))
+        agent.stop()
+        agent = None
+
+        # --- module engine: the kernel module blocks over Generic Netlink
+        agent = run_agent("module")
+        check("response: attacker reaches the host with the module agent running", reach())
+        block = api_send("POST", "/api/response/blocks", {"cidr": ATK4, "reason": "lab"})
+        check("response: the module agent blocks over Netlink and the kernel drops the attacker",
+              reach_becomes(False))
+        kernel_blocks = json.loads(sh(KGUARDCTL + ["--json", "blocks"]))
+        mine = [b for b in kernel_blocks if b["address"] == ATK4]
+        check("response: the kernel holds it as a lease of at most 20 s",
+              mine and mine[0]["expires_in"] is not None and mine[0]["expires_in"] <= 20, kernel_blocks)
+        prefix = api_send("POST", "/api/response/blocks", {"cidr": "10.200.1.0/24", "reason": "lab"})
+        failed = wait_for(lambda: agent_sync_state().get("failed") == 1)
+        check("response: the module agent reports the prefix it cannot apply (the module blocks addresses)",
+              failed, agent_sync_state())
+        api_send("DELETE", f"/api/response/blocks/{prefix['id']}")
+
+        # Lease: the agent dies, the block is removed; the kernel lets go by itself
+        agent.proc.kill()
+        agent.proc.wait()
+        agent = None
+        api_send("DELETE", f"/api/response/blocks/{block['id']}")
+        still = not reach()
+        check("response: a block whose removal the agent never saw ends within one lease",
+              still and reach_becomes(True, timeout=45))
+
+        sh(KGUARDCTL + ["set", "enforce=0"])
+        agent = run_agent("module")
+        api_send("POST", "/api/response/blocks", {"cidr": ATK4, "reason": "lab"})
+        monitor = wait_for(lambda: agent_sync_state().get("enforcing") is False)
+        check("response: monitor-only mode is reported and the traffic passes", monitor and reach(),
+              agent_sync_state())
+    finally:
+        if agent:
+            agent.stop()
+        backend.stop()
+        sh(KGUARDCTL + ["set", "enforce=0"], check_rc=False)
+        sh(KGUARDCTL + ["unblock", ATK4], check_rc=False)
+        sh([AGENT, "unblock", f"{ATK4}/32"], check_rc=False)
+
+
+def test_local_enforcement():
+    """S6.4: with no agent, the backend itself blocks through this machine's module (Netlink)"""
+    load_module()
+    sh(KGUARDCTL + ["set", "enforce=1"])
+    backend = Backend(LOCAL_ENFORCEMENT="auto", BLOCK_LEASE_SECONDS="20")
+    backend.start()
+    try:
+        check("local: attacker reaches the host before any block", reach())
+        block = api_send("POST", "/api/response/blocks", {"cidr": ATK4, "reason": "lab"})
+        check("local: the backend blocks over Netlink straight away", reach_becomes(False, timeout=15))
+        status = api("/api/response/status")["local"]
+        check("local: status says enforcing", status["status"] == "enforcing" and status["managed"] == 1, status)
+        api_send("DELETE", f"/api/response/blocks/{block['id']}")
+        check("local: unblocking removes it from the kernel", reach_becomes(True, timeout=15))
+        check("local: nothing left in the kernel's blocklist",
+              json.loads(sh(KGUARDCTL + ["--json", "blocks"])) == [])
+    finally:
+        backend.stop()
+        sh(KGUARDCTL + ["set", "enforce=0"], check_rc=False)
+        sh(KGUARDCTL + ["unblock", ATK4], check_rc=False)
+
+
 def main():
     if os.geteuid():
         raise SystemExit("run as root")
     if module_loaded():
         sh("rmmod kguard")
-    tests = [test_ebpf_capture, test_ebpf_attribution, test_ebpf_ipv6]
+    only = [t for t in os.environ.get("AGENT_TESTS", "").split(",") if t]
+    tests = [t for t in (test_ebpf_capture, test_ebpf_attribution, test_ebpf_ipv6)
+             if not only or t.__name__ in only]
     for test in tests:
         try:
             test()
         except Exception as e:
             check(f"{test.__name__} ran without errors", False, repr(e)[:200])
     with Lab():
-        for test in (test_xdp_blocklist, test_module_engine, test_two_hosts, test_backend_restart):
+        for test in (test_xdp_blocklist, test_module_engine, test_two_hosts, test_backend_restart,
+                     test_response_engine, test_local_enforcement):
+            if only and test.__name__ not in only:
+                continue
             try:
                 test()
             except Exception as e:

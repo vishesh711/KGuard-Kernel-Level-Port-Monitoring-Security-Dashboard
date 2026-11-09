@@ -8,11 +8,19 @@ uvicorn[standard]>=0.30
 # Database
 sqlalchemy>=2.0.30,<2.1
 alembic>=1.13
+# PostgreSQL driver (DATABASE_URL=postgresql+psycopg://...)
+psycopg[binary]>=3.1
 
 # Settings and validation
 pydantic>=2.7,<3
 pydantic-settings>=2.3,<3
 python-dotenv>=1.0
+
+# Login tokens (JWT, HS256)
+PyJWT>=2.8
+
+# GeoLite2 country and ASN lookups for alert enrichment
+maxminddb>=2.5
 
 # System metrics for /api/health
 psutil>=5.9

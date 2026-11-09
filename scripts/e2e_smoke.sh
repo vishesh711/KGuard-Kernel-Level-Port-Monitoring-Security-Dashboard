@@ -64,6 +64,8 @@ echo "== Starting backend"
     PROC_KGUARD_PATH=/proc/kguard \
     DATA_COLLECTION_INTERVAL=0.5 \
     DEBUG=true \
+    SECRET_KEY="e2e-signing-key-00000000000000000000000000" \
+    ADMIN_USERNAME=e2e ADMIN_PASSWORD=e2e-admin-password \
     exec "$PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port "$PORT"
 ) >"$WORK/backend.log" 2>&1 &
 BACKEND_PID=$!
@@ -74,13 +76,19 @@ for _ in $(seq 1 30); do
 done
 curl -sf "$API/api/health/" >/dev/null || { cat "$WORK/backend.log" >&2; fail "backend did not start"; }
 
+# Every API call but the health probe needs a login (roadmap S6.5)
+TOKEN=$(curl -sf -H 'Content-Type: application/json' \
+    -d '{"username": "e2e", "password": "e2e-admin-password"}' "$API/api/auth/login" |
+    "$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["access_token"])') || fail "cannot log in"
+api_get() { curl -sf -H "Authorization: Bearer $TOKEN" "$@"; }
+
 kernel_ok=$(curl -sf "$API/api/health/" | "$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["kernel_module"])')
 [[ "$kernel_ok" == "True" ]] || fail "backend cannot see the kernel module"
 pass "backend running and sees the kernel module"
 
 source=""
 for _ in $(seq 1 20); do
-    source=$(curl -sf "$API/api/health/kernel" | "$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["details"]["source"])')
+    source=$(api_get "$API/api/health/kernel" | "$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["details"]["source"])')
     [[ "$source" == "device" ]] && break
     sleep 0.5
 done
@@ -89,7 +97,7 @@ pass "backend reads events through /dev/kguard (zero-copy)"
 
 kdet=""
 for _ in $(seq 1 30); do
-    kdet=$(curl -sf "$API/api/health/kernel" | "$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["details"]["kernel_detection"])')
+    kdet=$(api_get "$API/api/health/kernel" | "$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["details"]["kernel_detection"])')
     [[ "$kdet" == "True" ]] && break
     sleep 0.5
 done
@@ -109,7 +117,7 @@ fi
 echo "== Waiting for the PORT_SCAN alert"
 found=""
 for _ in $(seq 1 30); do
-    found=$(curl -sf "$API/api/alerts/?alert_type=PORT_SCAN" | "$PYTHON" -c '
+    found=$(api_get "$API/api/alerts/?alert_type=PORT_SCAN" | "$PYTHON" -c '
 import json, sys
 items = json.load(sys.stdin)["items"]
 print(items[0]["src_ip"] if items else "")')
@@ -119,14 +127,14 @@ done
 [[ -n "$found" ]] || { tail -50 "$WORK/backend.log" >&2; fail "no PORT_SCAN alert"; }
 pass "PORT_SCAN alert raised for $found"
 
-origin=$(curl -sf "$API/api/alerts/?alert_type=PORT_SCAN" | "$PYTHON" -c '
+origin=$(api_get "$API/api/alerts/?alert_type=PORT_SCAN" | "$PYTHON" -c '
 import json, sys
 items = json.load(sys.stdin)["items"]
 print(len(items), (items[0].get("metadata") or {}).get("source", "backend"))')
 [[ "$origin" == "1 kernel" ]] || fail "expected one kernel-detected PORT_SCAN alert, got: $origin"
 pass "scan detected in the kernel and reported once"
 
-events=$(curl -sf "$API/api/events/stats/summary?hours=1" | "$PYTHON" -c 'import json,sys; d=json.load(sys.stdin); print(d["total_events"], d["suspicious_events"])')
+events=$(api_get "$API/api/events/stats/summary?hours=1" | "$PYTHON" -c 'import json,sys; d=json.load(sys.stdin); print(d["total_events"], d["suspicious_events"])')
 [[ "${events#* }" -gt 0 ]] || fail "no events were marked suspicious after the scan ($events)"
 pass "events stored / flagged suspicious: $events"
 
@@ -138,7 +146,7 @@ curl -s --max-time 1 http://127.0.0.1:4446/ >/dev/null || true
 kill "$NC_PID" 2>/dev/null || true
 names=""
 for _ in $(seq 1 20); do
-    names=$(curl -sf "$API/api/events/?dst_port=4446&size=100" | "$PYTHON" -c '
+    names=$(api_get "$API/api/events/?dst_port=4446&size=100" | "$PYTHON" -c '
 import json, sys
 items = json.load(sys.stdin)["items"]
 print(" ".join(sorted({e["direction"] + ":" + e["process_name"] for e in items if e["process_name"]})))')
@@ -149,7 +157,7 @@ done
 [[ "$names" == *"in:nc"* ]] || fail "incoming connection not attributed to the nc listener (got: $names)"
 pass "connections attributed: $names"
 
-dropped=$(curl -sf "$API/api/health/kernel" | "$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["details"]["kernel_events_dropped"])')
+dropped=$(api_get "$API/api/health/kernel" | "$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["details"]["kernel_events_dropped"])')
 [[ "$dropped" == "0" ]] || fail "kernel dropped $dropped events"
 pass "no events dropped by the kernel buffer"
 

@@ -37,6 +37,7 @@ struct agent_config {
 	unsigned int flush_ms;
 	unsigned int queue_capacity;
 	unsigned int ringbuf_mb;	/* ebpf ring buffer size */
+	unsigned int sync_seconds;	/* blocklist sync interval; 0 = no sync */
 };
 
 extern volatile int agent_stop;
@@ -79,6 +80,11 @@ struct engine {
 	void (*close)(void);
 	/* Optional: where payload samples go (called before open) */
 	void (*set_payload_cb)(payload_cb cb, void *ctx);
+	/* Blocklist enforcement (S6.4): 0 or -errno */
+	int (*block)(const char *prefix, unsigned int timeout_s);
+	int (*unblock)(const char *prefix);
+	/* 1: blocked traffic is dropped, 0: recorded only, <0: unknown */
+	int (*enforcing)(void);
 };
 
 extern const struct engine module_engine;
@@ -88,6 +94,18 @@ extern const struct engine ebpf_engine;
 int ebpf_block(const char *prefix, unsigned int timeout_s);
 int ebpf_unblock(const char *prefix);
 int ebpf_list_blocks(void);
+
+/* genl.c: the kernel module's block commands over Generic Netlink (0 or -errno) */
+int genl_block(const char *prefix, unsigned int timeout_s);
+int genl_unblock(const char *prefix);
+int genl_enforcing(void);
+
+/* blocksync.c: keeps the engine's blocklist in step with the backend */
+struct blocksync_args {
+	const struct agent_config *cfg;
+	const struct engine *engine;
+};
+void *blocksync_thread(void *arg);
 
 /* procres.c: socket inode -> owning process, by scanning /proc */
 bool procres_lookup(uint64_t inode, uint32_t *pid, char comm[16]);

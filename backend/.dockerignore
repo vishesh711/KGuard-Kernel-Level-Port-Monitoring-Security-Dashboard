@@ -1,0 +1,15 @@
+# Kept out of the image: secrets, local data, caches and tests
+.env
+.env.*
+!.env.example
+data/
+logs/
+*.db
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+venv/
+.venv/

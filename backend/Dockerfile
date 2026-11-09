@@ -1,20 +1,17 @@
 # KGuard Backend Dockerfile
-FROM python:3.11-slim as base
+FROM python:3.11-slim AS base
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    gcc \
-    python3-dev \
-    && rm -rf /var/lib/apt/lists/*
+# No system packages: every dependency ships as a wheel, and the health
+# check uses Python, so there is no compiler or curl in the image
 
-# Create app user
-RUN groupadd -r app && useradd -r -g app app
+# Unprivileged user the backend runs as (fixed IDs so volumes and
+# group_add are predictable)
+RUN groupadd -r -g 10001 app && useradd -r -u 10001 -g app -d /app -s /usr/sbin/nologin app
 
 # Set work directory
 WORKDIR /app
@@ -24,7 +21,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Development stage
-FROM base as development
+FROM base AS development
 
 # Install development dependencies
 COPY requirements-dev.txt .
@@ -43,28 +40,29 @@ USER app
 EXPOSE 8000
 
 # Command for development
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Reloads on code changes because DEBUG=true
+CMD ["python", "-m", "app"]
 
 # Production stage
-FROM base as production
+FROM base AS production
 
-# Copy application code
+# Application code belongs to root and is read-only to the app user; only
+# data/ and logs/ are writable
 COPY . .
-
-# Create data directory with proper permissions
 RUN mkdir -p /app/data /app/logs && \
-    chown -R app:app /app && \
-    chmod 755 /app/data
+    chown app:app /app/data /app/logs && \
+    chmod 750 /app/data /app/logs
 
-# Switch to app user
-USER app
+# Never run as root
+USER 10001:10001
 
 # Expose port
 EXPOSE 8000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/api/health || exit 1
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health/', timeout=5)"]
 
 # Command for production
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+# One process: the collector and detection state live in it (see app/__main__.py)
+CMD ["python", "-m", "app"]

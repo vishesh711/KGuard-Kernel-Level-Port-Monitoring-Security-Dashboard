@@ -6,7 +6,7 @@ Settings are loaded from environment variables with sensible defaults.
 """
 
 import os
-from typing import List
+from typing import Dict, List
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -23,10 +23,22 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/kguard.db"
 
     # Security
-    secret_key: str = "change-this-in-production-very-secret-key"
-    access_token_expire_minutes: int = 30
+    # Signs login tokens. Required: the backend refuses to start without one
+    # (at least 32 characters, e.g. openssl rand -hex 32)
+    secret_key: str = ""
+    # How long a login lasts (one shift)
+    access_token_expire_minutes: int = 480
+    # First admin, created only while there are no users at all
+    admin_username: str = "admin"
+    admin_password: str = ""
+    # Requests per minute per client address to /api (0 = no limit)
+    rate_limit_per_minute: int = 300
+    # Failed logins per minute per address and per username (0 = no limit)
+    login_attempts_per_minute: int = 5
+    # Proxies whose X-Forwarded-For is believed (the frontend's nginx)
+    forwarded_allow_ips: str = "127.0.0.1"
 
-    # CORS
+    # CORS: browser origins that may call the API ("*" is refused)
     allowed_origins: List[str] = [
         "http://localhost:3000",
         "http://localhost:5173",
@@ -34,12 +46,16 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173"
     ]
 
-    # Host names the API answers to when DEBUG is off (TrustedHostMiddleware)
-    allowed_hosts: List[str] = ["localhost", "127.0.0.1", "*.local", "backend"]
+    # Host names the API answers to (TrustedHostMiddleware; "*" is refused)
+    allowed_hosts: List[str] = ["localhost", "127.0.0.1", "backend"]
 
     # Logging
     log_level: str = "INFO"
-    log_format: str = "json"
+    log_format: str = "json"  # "json" (one object per line) or "text"
+    # Also log to this file, rotated at log_max_bytes; empty = stdout only
+    log_file: str = ""
+    log_max_bytes: int = 10_000_000
+    log_backup_count: int = 5
 
     # Kernel Module Interface
     # Where events come from: "device" (/dev/kguard, zero-copy mmap),
@@ -61,6 +77,41 @@ class Settings(BaseSettings):
 
     # Agents (remote hosts). Enrollment is disabled while the key is empty.
     agent_enrollment_key: str = ""
+
+    # Response engine (S6.4). Blocks are always available from the API;
+    # automatic blocking is off until AUTO_BLOCK=true.
+    auto_block: bool = False
+    # Alert types that block their source automatically. Not SYN floods,
+    # spoofing or amplification: their source addresses are easily forged,
+    # so blocking them would let an attacker cut off anyone.
+    auto_block_types: List[str] = ["PORT_SCAN", "BRUTE_FORCE"]
+    auto_block_min_severity: str = "HIGH"
+    # Also block the source of any alert when it is on a threat list (S6.3)
+    auto_block_listed_sources: bool = False
+    # How long an automatic block lasts; doubled for each earlier automatic
+    # block of the same address in the last day (at most a week)
+    auto_block_minutes: int = 60
+    # Enforcers hold each block for at most this long and renew it, so a
+    # block whose removal never reached them still ends soon
+    block_lease_seconds: int = 300
+    # Apply blocks with the kernel module on this machine over Netlink:
+    # "auto" (when the module is loaded and the backend may: CAP_NET_ADMIN)
+    # or "off" (leave enforcement to agents)
+    local_enforcement: str = "auto"
+
+    # Enrichment (S6.3): MaxMind GeoLite2 databases and bad-IP list files
+    geoip_country_db: str = "./data/geoip/GeoLite2-Country.mmdb"
+    geoip_asn_db: str = "./data/geoip/GeoLite2-ASN.mmdb"
+    # Every *.txt / *.netset / *.ipset file here is a list named after the file
+    threat_lists_dir: str = "./data/threatlists"
+    # Lists fetched by "python -m app.threatlists update" (and every
+    # threat_list_update_hours by the backend itself, when set)
+    threat_list_urls: Dict[str, str] = {
+        "firehol_level1": "https://iplists.firehol.org/files/firehol_level1.netset",
+        "spamhaus_drop": "https://www.spamhaus.org/drop/drop.txt",
+        "spamhaus_dropv6": "https://www.spamhaus.org/drop/dropv6.txt",
+    }
+    threat_list_update_hours: int = 0
     max_ingest_events: int = 20000
 
     # Anomaly Detection
@@ -115,6 +166,13 @@ class Settings(BaseSettings):
     # column is a JA3 (32 hex) or JA4 fingerprint and whose other columns are
     # a label, e.g. abuse.ch SSLBL's ja3_fingerprints.csv. Empty: no matching.
     tls_fingerprint_blocklist: str = ""
+    # Data retention (retention.py), in days; 0 keeps that data forever.
+    # Open alerts are never deleted automatically.
+    retention_events_days: int = 7
+    retention_metrics_days: int = 30
+    retention_alerts_days: int = 90
+    retention_interval_hours: int = 24
+    retention_batch: int = 10_000
     # IPFIX flow export (flow_export.py): collectors as "host:port"; empty = off
     ipfix_collectors: List[str] = []
     ipfix_idle_timeout: int = 15
@@ -154,10 +212,6 @@ class Settings(BaseSettings):
     websocket_heartbeat_interval: int = 30
     # Most network events pushed live per collection cycle (alerts are never capped)
     websocket_max_events_per_batch: int = 20
-
-    # Rate Limiting
-    rate_limit_requests_per_minute: int = 100
-    rate_limit_burst: int = 20
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
 

@@ -24,7 +24,9 @@ def test_list_alerts_includes_metadata(client, db):
     item = body["items"][0]
     assert item["alert_type"] == "PORT_SCAN"
     assert item["severity"] == "HIGH"
+    enrichment = item["metadata"].pop("enrichment")  # added to every alert (S6.3)
     assert item["metadata"] == {"event_count": 25, "detection_method": "frequency_analysis"}
+    assert enrichment["mitre"][0]["id"] == "T1046"
     assert item["related_event_ids"] == [1, 2, 3]
 
 
@@ -61,11 +63,11 @@ def test_acknowledge_then_resolve(client, db):
 
     item = client.get(f"/api/alerts/{alert.id}").json()
     assert item["acknowledged"] is True
-    assert item["acknowledged_by"] == "analyst"
+    assert item["acknowledged_by"] == "test-admin"  # the logged-in user, not what the client claims
     assert item["resolved"] is True
     assert item["resolution_notes"] == "blocked at firewall"
     assert item["metadata"]["acknowledgment_notes"] == "looking"
-    assert item["metadata"]["resolved_by"] == "analyst"
+    assert item["metadata"]["resolved_by"] == "test-admin"
 
 
 def test_alert_stats(client, db):

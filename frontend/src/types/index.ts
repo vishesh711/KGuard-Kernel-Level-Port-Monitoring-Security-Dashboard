@@ -72,6 +72,30 @@ export interface SecurityAlert {
   host_id?: number | null
 }
 
+/** Added to every alert's metadata by the backend (roadmap S6.3) */
+export interface MitreTechnique {
+  id: string
+  name: string
+  tactic: string
+  url: string
+}
+
+export interface AddressInfo {
+  ip: string
+  scope?: 'not public'
+  country?: string
+  country_name?: string
+  asn?: number
+  as_org?: string
+  threat_lists?: string[]
+}
+
+export interface AlertEnrichment {
+  mitre: MitreTechnique[]
+  src?: AddressInfo
+  dst?: AddressInfo
+}
+
 export type AlertType =
   | 'PORT_SCAN'
   | 'BRUTE_FORCE'

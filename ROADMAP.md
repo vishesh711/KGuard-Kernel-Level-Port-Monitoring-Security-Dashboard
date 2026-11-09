@@ -195,24 +195,28 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
 
 ## Phase 6 — Backend upgrade
 
-- [ ] **S6.1 PostgreSQL and migrations.** Postgres in production (TimescaleDB optional), real Alembic migrations, automatic deletion of old data.
+- [x] **S6.1 PostgreSQL and migrations.** Postgres in production (TimescaleDB optional), real Alembic migrations, automatic deletion of old data.
   *Done when:* `alembic upgrade head` builds the schema from empty; retention job runs daily.
+  *Status:* Done. On PostgreSQL 16 and SQLite, `alembic upgrade head` builds the schema from empty, `alembic check` finds no difference from the models, and downgrade to empty and back works; CI runs this and the full backend suite (178 tests) on PostgreSQL. The backend migrates at start-up (checked by starting it on an empty PostgreSQL database), and upgrades pre-migration databases in place. The retention job runs a minute after start-up and then daily, deleting in batches (tests cover each table, pcap removal, batching, 0 = keep forever, and the daily schedule). The production compose file runs postgres:16. TimescaleDB is not used.
 - [ ] **S6.2 Redis state.** Sliding-window counters for detection in Redis, so restarts don't lose detection state and multiple backend workers agree.
   *Done when:* a scan spread across a backend restart is still detected.
 - [ ] **S6.3 Enrichment.** GeoIP (MaxMind GeoLite2), public bad-IP lists, and MITRE ATT&CK technique IDs on each alert (e.g. port scan → T1046).
   *Done when:* alerts show country, list matches and technique ID.
 - [ ] **S6.4 Response engine.** Rules for when to block automatically, with allowlist, expiry, manual unblock and an audit log; sends block commands to the agent or Netlink.
   *Done when:* blocking and unblocking from the API works end to end.
-- [ ] **S6.5 Login and roles.** JWT login, admin and viewer roles; destructive endpoints (`/cleanup`, blocking) are admin-only; WebSocket requires a token.
+- [x] **S6.5 Login and roles.** JWT login, admin and viewer roles; destructive endpoints (`/cleanup`, blocking) are admin-only; WebSocket requires a token.
   *Done when:* unauthenticated requests get 401 (tests for every endpoint).
-- [ ] **S6.6 Hardening.** Rate limiting, no default secret key (refuse to start without one), strict CORS and trusted hosts, run as a non-root user, read-only access to the device.
+  *Status:* Done. Users table (migration 0002), scrypt password hashes, HS256 tokens carrying a version so a password, role or status change ends existing logins at once, user management API and `python -m app.users`. Tests take every endpoint from the OpenAPI schema: all 29 non-public operations return 401 without a token, viewers get 403 on all 7 that change data, and can read the other 17; bad, expired, forged, `alg: none` and revoked tokens are refused. The 5 public endpoints are listed with the reason (login, liveness probe, `/`, and the agents' own enrollment-key and token auth). The WebSocket refuses connections without a valid token. Acknowledge and resolve record the logged-in user. Blocking endpoints do not exist yet; S6.4 adds them as admin-only. The dashboard has a login screen (checked in Chromium: sign-in, live WebSocket, sign-out); hiding admin actions from viewers is U7.6. Lab scripts, the end-to-end smoke test (VM, real module), the agent suite (31/31) and the flow/pcap lab (10/10) pass with login.
+- [x] **S6.6 Hardening.** Rate limiting, no default secret key (refuse to start without one), strict CORS and trusted hosts, run as a non-root user, read-only access to the device.
   *Done when:* security tests pass, and the container runs as non-root.
+  *Status:* Done. Per-address token-bucket limit on the API and a failed-login limit per address and per username (429 + Retry-After); refuses to start without a 32+ character SECRET_KEY, with an example value, or with `*` origins/hosts (tested by starting the real server); CORS limited to listed origins without credentials; TrustedHost always on; security headers; tokens redacted from all logs (found and fixed: uvicorn logged WebSocket URLs with the token). Production image built and run: user 10001 by default, code root-owned and read-only, no compiler or curl; with the Compose settings (read-only root, `cap_drop: ALL`, no-new-privileges) the backend ran healthy against PostgreSQL with zero capabilities. Also fixed in Compose: missing nginx and redis config mounts, a root-owned log directory the non-root user could not write, and a published backend port. Device access: the backend uses the module's reader group, not root or CAP_NET_ADMIN, so it cannot change module settings or block lists; it opens `/dev/kguard` read-write only to store its own read position in the ring header. Not checked: the nginx frontend container (Docker Hub rate-limited its image pull here).
 - [ ] **S6.7 Notifications.** Slack, email and Telegram for alerts at or above a set severity, with per-channel rate limits.
   *Done when:* a test alert reaches a Slack channel.
 - [ ] **S6.8 Metrics.** Prometheus `/metrics`: events/s, drops, detection time, alerts by type; include a sample Grafana dashboard.
   *Done when:* the Grafana dashboard loads from `docker compose up`.
-- [ ] **S6.9 Structured logging.** JSON logs with request IDs; log rotation.
+- [x] **S6.9 Structured logging.** JSON logs with request IDs; log rotation.
   *Done when:* each log line is valid JSON.
+  *Status:* Done. Every line, including uvicorn's start-up and shutdown, Alembic's, warnings and uncaught exceptions, is one JSON object. Each request and WebSocket connection gets an ID (the client's X-Request-ID if sensible), returned in the response and on every line logged while it is handled; one access line per request with status and duration. A test starts the real server (`python -m app`), sends good, 404 and 422 requests, stops it and parses every line of its output; also checked by hand with DEBUG on (code reloader) and off. LOG_FILE rotates by size (tested: each file under the limit and all JSON); in Docker, stdout is rotated by Docker. The production image now runs one process instead of four workers, which had each read the kernel rings and kept separate detection state.
 
 ## Phase 7 — Frontend upgrade
 

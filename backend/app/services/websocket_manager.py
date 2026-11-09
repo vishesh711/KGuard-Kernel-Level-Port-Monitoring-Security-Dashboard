@@ -235,6 +235,8 @@ class ConnectionManager:
             client_id: Client identifier
             message: Received message
         """
+        if client_id not in self.connection_info:
+            return  # already dropped (a send to it failed)
         try:
             data = json.loads(message)
             msg_type = data.get("type", "unknown")
@@ -304,19 +306,20 @@ class ConnectionManager:
 
     async def _stop_background_tasks(self):
         """Stop background maintenance tasks"""
-        if self.heartbeat_task and not self.heartbeat_task.done():
-            self.heartbeat_task.cancel()
+        current = asyncio.current_task()
+        for task in (self.heartbeat_task, self.cleanup_task):
+            # The heartbeat or cleanup loop itself can get here (its send to the
+            # last client failed and disconnected it): a task cannot wait for
+            # itself, and its loop ends anyway once no clients are left
+            if not task or task.done() or task is current:
+                continue
+            task.cancel()
             try:
-                await self.heartbeat_task
+                await task
             except asyncio.CancelledError:
                 pass
-
-        if self.cleanup_task and not self.cleanup_task.done():
-            self.cleanup_task.cancel()
-            try:
-                await self.cleanup_task
-            except asyncio.CancelledError:
-                pass
+            except Exception as e:
+                logger.error(f"WebSocket background task failed: {e}")
 
         logger.info("WebSocket background tasks stopped")
 
@@ -415,10 +418,16 @@ async def broadcast_network_event(event_data: dict):
 
 
 async def broadcast_security_alert(alert_data: dict):
-    """Announce a new security alert: to connected dashboards, and to the packet capture"""
-    from .packet_capture import packet_capture  # imported here: it imports the database layer
+    """
+    Announce a new (stored) security alert: to the packet capture, to the
+    response engine's automatic rules, and to connected dashboards
+    """
+    # Imported here: they import the database layer
+    from .packet_capture import packet_capture
+    from .response import response_engine
 
     packet_capture.on_alert(alert_data)
+    response_engine.on_alert(alert_data)
     message = WebSocketMessage(
         type="security_alert",
         data=alert_data

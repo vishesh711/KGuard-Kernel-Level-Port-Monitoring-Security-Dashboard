@@ -5,6 +5,7 @@ Sets up the SQLAlchemy engine and session factory.
 """
 
 import logging
+from pathlib import Path
 from typing import Generator
 
 from sqlalchemy import create_engine, inspect, text
@@ -46,49 +47,92 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
+# Revision that matches the schema of databases made before migrations existed
+BASELINE_REVISION = "0001"
+# The tables that revision has; later tables come from their own migrations
+BASELINE_TABLES = ("agents", "dns_queries", "network_events", "security_alerts",
+                   "system_metrics", "tls_handshakes")
+# Columns later migrations add to those tables. A pre-migration database is
+# brought to the baseline without them, so the migrations can add them.
+# Every migration that adds a column to a baseline table must list it here.
+LATER_COLUMNS = {
+    "agents": ("blocklist_applied", "blocklist_failed", "blocklist_enforcing", "blocklist_synced_at"),
+}
+ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
+_migrated = False
+
+
+def alembic_config(connection=None):
+    from alembic.config import Config
+
+    config = Config(str(ALEMBIC_INI))
+    config.set_main_option("script_location", str(ALEMBIC_INI.parent / "alembic"))
+    if connection is not None:
+        config.attributes["connection"] = connection
+    return config
+
+
 def init_db() -> None:
-    """Create database tables, and add columns that newer versions introduced"""
-    # Import models so they register with Base.metadata
-    from . import models  # noqa: F401
-
-    Base.metadata.create_all(bind=engine)
-    _add_missing_columns()
-    _add_missing_enum_values()
-    logger.info("Database tables created successfully")
-
-
-def _add_missing_columns() -> None:
     """
-    create_all() never alters existing tables, so a database made by an older
-    version would lack newer columns. Add any missing nullable column.
-    (Stopgap until Alembic migrations are in place: roadmap S6.1.)
+    Bring the database schema up to date with Alembic migrations (once per
+    process). A database created before migrations existed (tables, but no
+    alembic_version) is first brought to the baseline the old way, then
+    stamped, so its data is kept.
     """
-    inspector = inspect(engine)
-    quote = engine.dialect.identifier_preparer.quote
+    global _migrated
+    if _migrated:
+        return
+    from alembic import command
+
+    from . import models  # noqa: F401  (registers the tables)
+
     with engine.begin() as conn:
-        for table in Base.metadata.sorted_tables:
-            if not inspector.has_table(table.name):
+        tables = set(inspect(conn).get_table_names())
+        config = alembic_config(conn)
+        if "alembic_version" not in tables and "network_events" in tables:
+            logger.info("Database predates migrations: adding missing columns, then stamping the baseline")
+            _add_missing_columns(conn)
+            _add_missing_enum_values()
+            command.stamp(config, BASELINE_REVISION)
+        command.upgrade(config, "head")
+    _migrated = True
+    logger.info("Database schema is up to date")
+
+
+def _add_missing_columns(conn) -> None:
+    """
+    Bring a pre-migration database to the baseline: create_all() for tables it
+    lacks, then any missing nullable column (create_all never alters tables).
+    """
+    baseline = [t for t in Base.metadata.sorted_tables if t.name in BASELINE_TABLES]
+    missing = [t for t in baseline if t.name not in set(inspect(conn).get_table_names())]
+    Base.metadata.create_all(bind=conn, tables=missing)
+    quote = conn.dialect.identifier_preparer.quote
+    # create_all used today's models: take off what later migrations add
+    for table in missing:
+        for name in LATER_COLUMNS.get(table.name, ()):
+            conn.execute(text(f"ALTER TABLE {quote(table.name)} DROP COLUMN {quote(name)}"))
+    inspector = inspect(conn)
+    for table in baseline:
+        existing = {column["name"] for column in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in existing or column.name in LATER_COLUMNS.get(table.name, ()):
                 continue
-            existing = {column["name"] for column in inspector.get_columns(table.name)}
-            for column in table.columns:
-                if column.name in existing:
-                    continue
-                if not column.nullable:
-                    logger.warning(
-                        f"Cannot add required column {table.name}.{column.name}; recreate the table"
-                    )
-                    continue
-                column_type = column.type.compile(dialect=engine.dialect)
-                conn.execute(text(
-                    f"ALTER TABLE {quote(table.name)} ADD COLUMN {quote(column.name)} {column_type}"
-                ))
-                logger.info(f"Added column {table.name}.{column.name}")
+            if not column.nullable:
+                logger.warning(f"Cannot add required column {table.name}.{column.name}; recreate the table")
+                continue
+            column_type = column.type.compile(dialect=conn.dialect)
+            conn.execute(text(
+                f"ALTER TABLE {quote(table.name)} ADD COLUMN {quote(column.name)} {column_type}"
+            ))
+            logger.info(f"Added column {table.name}.{column.name}")
 
 
 def _add_missing_enum_values() -> None:
     """
-    PostgreSQL stores Enum columns as native types, which reject values added
-    in newer versions (such as new alert types) until the type is altered.
+    PostgreSQL stores Enum columns as native types; a pre-migration database
+    may lack values (alert types) added since. ADD VALUE cannot run inside a
+    transaction block, so this uses its own autocommit connection.
     """
     if engine.dialect.name != "postgresql":
         return

@@ -77,13 +77,14 @@ class SecurityAlertResponse(SecurityAlertBase):
 
 class AlertAcknowledge(BaseModel):
     """Schema for acknowledging alerts"""
-    acknowledged_by: str = Field(..., max_length=100, description="Who is acknowledging the alert")
+    # Ignored: the logged-in user is recorded (kept so older clients still work)
+    acknowledged_by: Optional[str] = Field(None, max_length=100, description="Ignored; the logged-in user")
     notes: Optional[str] = Field(None, description="Optional acknowledgment notes")
 
 
 class AlertResolve(BaseModel):
     """Schema for resolving alerts"""
-    resolved_by: str = Field(..., max_length=100, description="Who is resolving the alert")
+    resolved_by: Optional[str] = Field(None, max_length=100, description="Ignored; the logged-in user")
     resolution_notes: str = Field(..., description="Notes about the resolution")
 
 

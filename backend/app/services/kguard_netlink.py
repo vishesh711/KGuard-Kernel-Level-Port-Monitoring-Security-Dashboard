@@ -7,6 +7,7 @@ kernel/include/uapi/linux/kguard.h (checked by tests/test_kernel_abi.py).
 """
 
 import ipaddress
+import os
 import socket
 import struct
 from typing import Any, Dict, Iterator, List, Optional, Tuple
@@ -34,10 +35,14 @@ KGUARD_GENL_MCGRP = "events"
 # enum kguard_genl_cmd
 KGUARD_CMD_CONFIG_CHANGED = 4
 KGUARD_CMD_ALERT = 5
+KGUARD_CMD_GET_CONFIG = 2
 KGUARD_CMD_BLOCK_ADD = 6  # present from module v3 on, which also sends alerts
+KGUARD_CMD_BLOCK_DEL = 7
 
 # enum kguard_genl_attr
+KGUARD_ATTR_CFG_ENFORCE = 22
 KGUARD_ATTR_ADDR = 29
+KGUARD_ATTR_TIMEOUT = 31
 KGUARD_ATTR_NETNS = 34
 KGUARD_ATTR_TIMESTAMP = 35
 KGUARD_ATTR_ALERT_TYPE = 36
@@ -183,6 +188,60 @@ class KGuardEventSocket:
                 cmd, payload = genl_split(body)
                 if cmd == KGUARD_CMD_ALERT:
                     alerts.append(decode_alert(payload))
+
+    def close(self) -> None:
+        self.sock.close()
+
+
+class KGuardControlSocket:
+    """
+    Requests to the kernel module (roadmap S6.4): add and remove blocks, read
+    whether it enforces them. Block commands need CAP_NET_ADMIN; without it
+    the kernel answers EPERM, raised as PermissionError.
+    """
+
+    def __init__(self):
+        self.sock = socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, NETLINK_GENERIC)
+        self.seq = 100
+        try:
+            self.sock.bind((0, 0))
+            self.sock.settimeout(2.0)
+            # Reuse the event socket's family lookup
+            self.family = KGuardEventSocket._resolve(self)[0]
+        except Exception:
+            self.sock.close()
+            raise
+
+    def request(self, cmd: int, payload: bytes = b"") -> List[bytes]:
+        """Send one command with an ACK request; return the reply payloads"""
+        self.seq += 1
+        body = struct.pack("BBH", cmd, 1, 0) + payload
+        header = struct.pack("IHHII", 16 + len(body), self.family, NLM_F_REQUEST | NLM_F_ACK, self.seq, 0)
+        self.sock.send(header + body)
+        replies = []
+        while True:
+            for mtype, body in iter_messages(self.sock.recv(65536)):
+                if mtype == NLMSG_ERROR:
+                    error = struct.unpack_from("i", body)[0] if len(body) >= 4 else 0
+                    if error:
+                        raise OSError(-error, os.strerror(-error))
+                    return replies
+                replies.append(genl_split(body)[1])
+
+    def block_add(self, address: str, timeout_s: int) -> None:
+        self.request(KGUARD_CMD_BLOCK_ADD, attr(KGUARD_ATTR_ADDR, ipaddress.ip_address(address).packed)
+                     + attr(KGUARD_ATTR_TIMEOUT, struct.pack("I", max(0, int(timeout_s)))))
+
+    def block_del(self, address: str) -> None:
+        self.request(KGUARD_CMD_BLOCK_DEL, attr(KGUARD_ATTR_ADDR, ipaddress.ip_address(address).packed))
+
+    def enforcing(self) -> Optional[bool]:
+        """Whether the module drops blocked traffic (enforce=1), or None if unknown"""
+        for payload in self.request(KGUARD_CMD_GET_CONFIG):
+            value = parse_attrs(payload).get(KGUARD_ATTR_CFG_ENFORCE)
+            if value:
+                return bool(value[0])
+        return None
 
     def close(self) -> None:
         self.sock.close()

@@ -1,7 +1,52 @@
-import { SecurityAlert, AlertSeverity } from '../../types'
+import { AlertEnrichment, SecurityAlert, AlertSeverity } from '../../types'
 import { formatDistanceToNow } from 'date-fns'
 import { parseServerDate } from '../../lib/time'
 import { ExclamationTriangleIcon, ShieldExclamationIcon } from '@heroicons/react/24/outline'
+
+function enrichmentOf(alert: SecurityAlert): AlertEnrichment | undefined {
+  return alert.metadata?.enrichment as AlertEnrichment | undefined
+}
+
+/** Country, bad-IP list matches and MITRE ATT&CK techniques for one alert */
+export function EnrichmentTags({ alert }: { alert: SecurityAlert }) {
+  const enrichment = enrichmentOf(alert)
+  if (!enrichment) return null
+  const src = enrichment.src
+  return (
+    <div className="flex flex-wrap items-center gap-1 mt-2">
+      {src?.country && (
+        <span
+          className="inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-700"
+          title={[src.country_name, src.as_org].filter(Boolean).join(' · ')}
+        >
+          {src.country}
+          {src.asn ? ` · AS${src.asn}` : ''}
+        </span>
+      )}
+      {src?.threat_lists?.map((list) => (
+        <span
+          key={list}
+          className="inline-flex items-center rounded bg-red-50 px-1.5 py-0.5 text-xs text-red-700"
+          title="Source is on this bad-IP list"
+        >
+          {list}
+        </span>
+      ))}
+      {enrichment.mitre.map((t) => (
+        <a
+          key={t.id}
+          href={t.url}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center rounded bg-indigo-50 px-1.5 py-0.5 text-xs text-indigo-700 hover:underline"
+          title={`${t.name} (${t.tactic})`}
+        >
+          {t.id}
+        </a>
+      ))}
+    </div>
+  )
+}
 
 interface RecentAlertsProps {
   alerts: SecurityAlert[]
@@ -61,6 +106,7 @@ export function RecentAlerts({ alerts }: RecentAlertsProps) {
                   </span>
                 </div>
                 <p className="text-sm text-gray-500 mt-1 line-clamp-2">{alert.description}</p>
+                <EnrichmentTags alert={alert} />
                 <div className="flex items-center justify-between mt-2">
                   <p className="text-xs text-gray-400">
                     {formatDistanceToNow(parseServerDate(alert.timestamp), { addSuffix: true })}

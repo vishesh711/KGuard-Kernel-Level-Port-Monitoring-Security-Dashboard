@@ -68,8 +68,29 @@ def in_ns(cmd, **kw):
     return subprocess.run(["ip", "netns", "exec", NS] + cmd, capture_output=True, text=True, **kw)
 
 
+# The backend needs a signing key and every API call a login (roadmap S6.5);
+# the backend creates this admin on first start
+LAB_AUTH = {"SECRET_KEY": "lab-signing-key-" + "0" * 32, "ADMIN_USERNAME": "lab",
+            "ADMIN_PASSWORD": "lab-admin-password", "RATE_LIMIT_PER_MINUTE": "0",
+            "ALLOWED_HOSTS": json.dumps(["127.0.0.1", "localhost"])}
+_token = None
+
+
+def api_open(path, timeout=10):
+    """GET an API path as the lab admin (logs in on first use)"""
+    global _token
+    if _token is None:
+        login = json.dumps({"username": LAB_AUTH["ADMIN_USERNAME"], "password": LAB_AUTH["ADMIN_PASSWORD"]})
+        request = urllib.request.Request(API + "/api/auth/login", data=login.encode(),
+                                         headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=timeout) as r:
+            _token = json.loads(r.read())["access_token"]
+    return urllib.request.urlopen(urllib.request.Request(API + path, headers={"Authorization": f"Bearer {_token}"}),
+                                  timeout=timeout)
+
+
 def api(path):
-    with urllib.request.urlopen(API + path, timeout=10) as r:
+    with api_open(path) as r:
         return json.loads(r.read())
 
 
@@ -134,7 +155,7 @@ def teardown(procs):
 
 def start_backend():
     work = tempfile.mkdtemp(prefix="kguard-lab-")
-    env = dict(os.environ, DATABASE_URL=f"sqlite:///{work}/kguard.db", DEBUG="true",
+    env = dict(os.environ, **LAB_AUTH, DATABASE_URL=f"sqlite:///{work}/kguard.db", DEBUG="true",
                DATA_COLLECTION_INTERVAL="0.5")
     global BACKEND_LOG
     BACKEND_LOG = f"{work}/backend.log"
