@@ -14,22 +14,56 @@ from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
-from .api import agents_router, alerts_router, auth_router, events_router, health_router, payloads_router
+from .api import (
+    agents_router,
+    alerts_router,
+    auth_router,
+    events_router,
+    health_router,
+    payloads_router,
+    response_router,
+)
 from .config import settings
-from .database import check_db_connection, init_db
+from .database import check_db_connection, engine, init_db
 from .logging_setup import RequestContextMiddleware, configure_logging
 from .security import SecurityMiddleware, security_problems
 from .services.anomaly_detector import anomaly_detector
 from .services.auth import current_user, ensure_bootstrap_admin, websocket_user
 from .services.baseline import traffic_baseline
 from .services.data_collector import data_collector
+from .services.enrichment import enricher  # noqa: F401  (registers the alert enrichment hook)
 from .services.kernel_alerts import kernel_alerts
+from .services.local_enforcer import local_enforcer
 from .services.packet_capture import packet_capture
+from .services.response import response_engine
 from .services.retention import retention_job
 from .services.websocket_manager import connection_manager
 
 configure_logging()
 logger = logging.getLogger(__name__)
+
+_next_list_update = 0.0
+
+
+def threat_list_update_due(now: float) -> bool:
+    """THREAT_LIST_UPDATE_HOURS > 0: fetch the bad-IP lists at start-up and then that often"""
+    global _next_list_update
+    if settings.threat_list_update_hours <= 0 or now < _next_list_update:
+        return False
+    _next_list_update = now + settings.threat_list_update_hours * 3600
+    return True
+
+
+def update_threat_lists() -> None:
+    from .threatlists import update
+
+    update()
+
+
+# Seconds between renewing this machine's block leases (well inside BLOCK_LEASE_SECONDS)
+ENFORCE_INTERVAL = 5
+# Apply every blocklist change to this machine's kernel module straight away
+response_engine.listeners.append(local_enforcer.sync)
 
 
 async def periodic_tasks():
@@ -37,10 +71,15 @@ async def periodic_tasks():
     from .services.websocket_manager import broadcast_stats_update
 
     loop = asyncio.get_running_loop()
-    next_stats = next_baseline = loop.time()
+    next_stats = next_baseline = next_enforce = loop.time()
     while True:
         try:
             now = loop.time()
+            if now >= next_enforce:
+                # Renew this machine's block leases; record expired blocks
+                next_enforce = now + ENFORCE_INTERVAL
+                await loop.run_in_executor(None, local_enforcer.sync)
+                await loop.run_in_executor(None, response_engine.expire)
             if now >= next_baseline:
                 next_baseline = now + settings.baseline_interval_seconds
                 await traffic_baseline.tick()
@@ -48,6 +87,8 @@ async def periodic_tasks():
             if now >= next_stats:
                 next_stats = now + 30
                 anomaly_detector.cleanup_old_cooldowns()
+                if threat_list_update_due(now):
+                    await loop.run_in_executor(None, update_threat_lists)
                 if retention_job.due():
                     # Batched deletes; off the event loop so the API stays responsive
                     await loop.run_in_executor(None, retention_job.run)
@@ -59,7 +100,7 @@ async def periodic_tasks():
                         "websocket": connection_manager.get_stats(),
                     })
 
-            await asyncio.sleep(max(0.5, min(next_stats, next_baseline) - loop.time()))
+            await asyncio.sleep(max(0.5, min(next_stats, next_baseline, next_enforce) - loop.time()))
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -97,11 +138,16 @@ async def lifespan(app: FastAPI):
         logger.info("Shutting down KGuard Backend Service")
         data_collector.stop_collection()
         kernel_alerts.close()
+        local_enforcer.close()
         packet_capture.stop()
         for task in background:
             task.cancel()
         await asyncio.gather(*background, return_exceptions=True)
         await connection_manager.shutdown()
+        # Let jobs already running in worker threads (expiry, retention) finish,
+        # so no thread still holds a database connection; then close the pool
+        await asyncio.get_running_loop().shutdown_default_executor()
+        engine.dispose()
         logger.info("KGuard Backend Service shut down successfully")
 
 
@@ -145,6 +191,7 @@ app.include_router(alerts_router, dependencies=logged_in)
 app.include_router(health_router)
 app.include_router(agents_router)
 app.include_router(payloads_router, dependencies=logged_in)
+app.include_router(response_router, dependencies=logged_in)
 
 
 @app.get("/")
@@ -181,6 +228,8 @@ async def websocket_endpoint(websocket: WebSocket):
             try:
                 # Wait for message from client
                 message = await websocket.receive_text()
+                if client_id not in connection_manager.active_connections:
+                    break  # dropped after a failed send
                 await connection_manager.handle_client_message(client_id, message)
 
             except WebSocketDisconnect:

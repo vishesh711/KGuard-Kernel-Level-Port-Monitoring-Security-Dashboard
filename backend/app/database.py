@@ -52,6 +52,12 @@ BASELINE_REVISION = "0001"
 # The tables that revision has; later tables come from their own migrations
 BASELINE_TABLES = ("agents", "dns_queries", "network_events", "security_alerts",
                    "system_metrics", "tls_handshakes")
+# Columns later migrations add to those tables. A pre-migration database is
+# brought to the baseline without them, so the migrations can add them.
+# Every migration that adds a column to a baseline table must list it here.
+LATER_COLUMNS = {
+    "agents": ("blocklist_applied", "blocklist_failed", "blocklist_enforcing", "blocklist_synced_at"),
+}
 ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
 _migrated = False
 
@@ -99,13 +105,18 @@ def _add_missing_columns(conn) -> None:
     lacks, then any missing nullable column (create_all never alters tables).
     """
     baseline = [t for t in Base.metadata.sorted_tables if t.name in BASELINE_TABLES]
-    Base.metadata.create_all(bind=conn, tables=baseline)
-    inspector = inspect(conn)
+    missing = [t for t in baseline if t.name not in set(inspect(conn).get_table_names())]
+    Base.metadata.create_all(bind=conn, tables=missing)
     quote = conn.dialect.identifier_preparer.quote
+    # create_all used today's models: take off what later migrations add
+    for table in missing:
+        for name in LATER_COLUMNS.get(table.name, ()):
+            conn.execute(text(f"ALTER TABLE {quote(table.name)} DROP COLUMN {quote(name)}"))
+    inspector = inspect(conn)
     for table in baseline:
         existing = {column["name"] for column in inspector.get_columns(table.name)}
         for column in table.columns:
-            if column.name in existing:
+            if column.name in existing or column.name in LATER_COLUMNS.get(table.name, ()):
                 continue
             if not column.nullable:
                 logger.warning(f"Cannot add required column {table.name}.{column.name}; recreate the table")

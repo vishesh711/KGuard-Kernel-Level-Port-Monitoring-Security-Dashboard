@@ -6,7 +6,7 @@ Settings are loaded from environment variables with sensible defaults.
 """
 
 import os
-from typing import List
+from typing import Dict, List
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -77,6 +77,41 @@ class Settings(BaseSettings):
 
     # Agents (remote hosts). Enrollment is disabled while the key is empty.
     agent_enrollment_key: str = ""
+
+    # Response engine (S6.4). Blocks are always available from the API;
+    # automatic blocking is off until AUTO_BLOCK=true.
+    auto_block: bool = False
+    # Alert types that block their source automatically. Not SYN floods,
+    # spoofing or amplification: their source addresses are easily forged,
+    # so blocking them would let an attacker cut off anyone.
+    auto_block_types: List[str] = ["PORT_SCAN", "BRUTE_FORCE"]
+    auto_block_min_severity: str = "HIGH"
+    # Also block the source of any alert when it is on a threat list (S6.3)
+    auto_block_listed_sources: bool = False
+    # How long an automatic block lasts; doubled for each earlier automatic
+    # block of the same address in the last day (at most a week)
+    auto_block_minutes: int = 60
+    # Enforcers hold each block for at most this long and renew it, so a
+    # block whose removal never reached them still ends soon
+    block_lease_seconds: int = 300
+    # Apply blocks with the kernel module on this machine over Netlink:
+    # "auto" (when the module is loaded and the backend may: CAP_NET_ADMIN)
+    # or "off" (leave enforcement to agents)
+    local_enforcement: str = "auto"
+
+    # Enrichment (S6.3): MaxMind GeoLite2 databases and bad-IP list files
+    geoip_country_db: str = "./data/geoip/GeoLite2-Country.mmdb"
+    geoip_asn_db: str = "./data/geoip/GeoLite2-ASN.mmdb"
+    # Every *.txt / *.netset / *.ipset file here is a list named after the file
+    threat_lists_dir: str = "./data/threatlists"
+    # Lists fetched by "python -m app.threatlists update" (and every
+    # threat_list_update_hours by the backend itself, when set)
+    threat_list_urls: Dict[str, str] = {
+        "firehol_level1": "https://iplists.firehol.org/files/firehol_level1.netset",
+        "spamhaus_drop": "https://www.spamhaus.org/drop/drop.txt",
+        "spamhaus_dropv6": "https://www.spamhaus.org/drop/dropv6.txt",
+    }
+    threat_list_update_hours: int = 0
     max_ingest_events: int = 20000
 
     # Anomaly Detection

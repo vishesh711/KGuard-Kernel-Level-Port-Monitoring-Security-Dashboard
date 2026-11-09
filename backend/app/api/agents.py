@@ -9,6 +9,10 @@ Agents API: remote hosts running kguard-agent.
   POST /api/agents/ingest   Authorization: Bearer <token>
                             {"agent": {...}, "kernel_dropped": N,
                              "queue_dropped": N, "events": [...]}
+  GET  /api/agents/blocklist   Authorization: Bearer <token>
+                            ?applied=<version>&failed=<n>&enforcing=0|1
+                            -> text/plain blocklist for this host (S6.4); the
+                            query reports what the agent applied last time
   GET  /api/agents          every agent with its status and counters (login)
 """
 
@@ -16,9 +20,10 @@ import hashlib
 import hmac
 import secrets
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -28,6 +33,7 @@ from ..models.agent import Agent
 from ..services import auth
 from ..services.data_collector import data_collector
 from ..services.payloads import payload_service
+from ..services.response import response_engine
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -128,6 +134,31 @@ async def ingest(
 
     return {"accepted": stored, "rejected": len(body.events) - len(events),
             "payloads_accepted": samples.get("accepted", 0)}
+
+
+@router.get("/blocklist", response_class=PlainTextResponse)
+async def blocklist(
+    request: Request,
+    applied: str = Query("", max_length=32, pattern=r"^[0-9a-f]*$"),
+    failed: int = Query(0, ge=0),
+    enforcing: Optional[int] = Query(None, ge=0, le=1),
+    agent: Agent = Depends(current_agent),
+    db: Session = Depends(get_db),
+):
+    """
+    What this agent's host should block. The agent polls every few seconds,
+    applies the list and reports back the version it applied (and how many
+    entries it could not apply) on its next poll.
+    """
+    text, version = response_engine.blocklist_text(response_engine.active(db, host_id=agent.id))
+    agent.blocklist_applied = applied or None
+    agent.blocklist_failed = failed
+    agent.blocklist_enforcing = None if enforcing is None else bool(enforcing)
+    agent.blocklist_synced_at = datetime.utcnow()
+    agent.last_seen = datetime.utcnow()
+    agent.remote_addr = request.client.host if request.client else agent.remote_addr
+    db.commit()
+    return PlainTextResponse(text, headers={"X-Blocklist-Version": version})
 
 
 @router.get("/", dependencies=[Depends(auth.current_user)])

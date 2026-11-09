@@ -7,7 +7,7 @@ only a SHA-256 hash of the token is stored.
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import BigInteger, Column, DateTime, Integer, String
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, Integer, String
 from sqlalchemy.sql import func
 
 from ..database import Base
@@ -35,6 +35,12 @@ class Agent(Base):
     queue_dropped = Column(BigInteger, default=0, nullable=False, comment="Lost in the agent's queue")
     payload_dropped = Column(BigInteger, default=0, nullable=True,
                              comment="DNS/TLS payload samples lost in the agent's queue")
+    # Blocklist sync (S6.4): the version the agent last applied, how many
+    # entries it could not apply, and whether its engine drops packets
+    blocklist_applied = Column(String(32), nullable=True)
+    blocklist_failed = Column(Integer, nullable=True)
+    blocklist_enforcing = Column(Boolean, nullable=True)
+    blocklist_synced_at = Column(DateTime(timezone=True), nullable=True)
 
     def is_online(self, now: datetime = None) -> bool:
         if not self.last_seen:
@@ -58,4 +64,10 @@ class Agent(Base):
             "kernel_dropped": self.kernel_dropped or 0,
             "queue_dropped": self.queue_dropped or 0,
             "payload_dropped": self.payload_dropped or 0,
+            "blocklist": {
+                "applied": self.blocklist_applied,
+                "failed": self.blocklist_failed,
+                "enforcing": self.blocklist_enforcing,
+                "synced_at": self.blocklist_synced_at.isoformat() if self.blocklist_synced_at else None,
+            },
         }

@@ -238,6 +238,10 @@ def test_every_line_of_a_real_server_run_is_json(tmp_path):
     assert not any("color_message" in e for e in entries)
     assert any(m.startswith("Running upgrade") or m == "Database schema is up to date" for m in messages)
     assert any("Shutting down" in m for m in messages)
+    # A WebSocket client that went away must not break shutdown
+    assert "KGuard Backend Service shut down successfully" in messages
+    assert not any(e["level"] in ("ERROR", "CRITICAL") for e in entries), [
+        e["message"] for e in entries if e["level"] in ("ERROR", "CRITICAL")]
     http = [e for e in entries if e["logger"] == "kguard.access" and "status" in e]
     assert {(e["path"], e["status"]) for e in http} >= {
         ("/api/health/", 200), ("/api/alerts/", 200), ("/no/such/path", 404),

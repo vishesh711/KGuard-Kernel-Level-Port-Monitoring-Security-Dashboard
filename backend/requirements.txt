@@ -19,5 +19,8 @@ python-dotenv>=1.0
 # Login tokens (JWT, HS256)
 PyJWT>=2.8
 
+# GeoLite2 country and ASN lookups for alert enrichment
+maxminddb>=2.5
+
 # System metrics for /api/health
 psutil>=5.9

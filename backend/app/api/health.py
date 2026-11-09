@@ -19,9 +19,12 @@ from ..schemas.common import HealthCheck
 from ..services.anomaly_detector import anomaly_detector
 from ..services.auth import current_user
 from ..services.data_collector import data_collector
+from ..services.enrichment import enricher
 from ..services.flow_export import flow_exporter
+from ..services.local_enforcer import local_enforcer
 from ..services.packet_capture import packet_capture
 from ..services.payloads import payload_service
+from ..services.response import response_engine
 from ..services.retention import retention_job
 
 # GET /api/health/ is public (Docker and load balancers probe it); every
@@ -105,6 +108,9 @@ async def detailed_health_check(db: Session = Depends(get_db)):
                 "payloads": payload_service.get_stats(),
                 "packet_capture": packet_capture.get_stats(),
                 "retention": retention_job.get_stats(),
+            "response": response_engine.get_stats(),
+            "local_enforcement": local_enforcer.get_stats(),
+            "enrichment": enricher.get_stats(),
             },
             "kernel_module": kernel_status,
             "configuration": {

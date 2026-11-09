@@ -24,7 +24,9 @@ def test_list_alerts_includes_metadata(client, db):
     item = body["items"][0]
     assert item["alert_type"] == "PORT_SCAN"
     assert item["severity"] == "HIGH"
+    enrichment = item["metadata"].pop("enrichment")  # added to every alert (S6.3)
     assert item["metadata"] == {"event_count": 25, "detection_method": "frequency_analysis"}
+    assert enrichment["mitre"][0]["id"] == "T1046"
     assert item["related_event_ids"] == [1, 2, 3]
 
 

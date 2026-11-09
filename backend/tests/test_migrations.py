@@ -7,7 +7,7 @@ from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine, 
 
 import app.database as database
 
-TABLES = set(database.BASELINE_TABLES) | {"users"}
+TABLES = set(database.BASELINE_TABLES) | {"users", "blocks", "block_allowlist", "audit_log"}
 
 
 def head():
@@ -83,3 +83,23 @@ def test_aware_datetimes_from_postgresql_are_normalised():
     assert utc_naive(datetime(2026, 1, 1, 17, 0)) == datetime(2026, 1, 1, 17, 0)
     now = datetime(2026, 1, 1, 11, 30, 10)
     assert Agent(last_seen=datetime(2026, 1, 1, 17, 0, tzinfo=india)).is_online(now)
+
+
+def test_later_columns_are_listed():
+    """A column a migration adds to a baseline table must be in LATER_COLUMNS"""
+    from alembic.script import ScriptDirectory
+
+    script = ScriptDirectory.from_config(database.alembic_config())
+    added = {}
+    for rev in script.walk_revisions():
+        if rev.revision == database.BASELINE_REVISION:
+            continue
+        source = open(rev.path).read()
+        for table in database.BASELINE_TABLES:
+            marker = f"batch_alter_table('{table}'"
+            if marker in source.split("def downgrade")[0]:
+                upgrade = source.split("def downgrade")[0]
+                for line in upgrade.split(marker, 1)[1].splitlines():
+                    if "add_column(sa.Column('" in line:
+                        added.setdefault(table, set()).add(line.split("sa.Column('")[1].split("'")[0])
+    assert added == {t: set(c) for t, c in database.LATER_COLUMNS.items()}

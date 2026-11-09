@@ -26,6 +26,12 @@ os.environ["ALLOWED_HOSTS"] = '["testserver", "localhost", "127.0.0.1"]'
 # Rate limits are tested on their own (test_security.py)
 os.environ["RATE_LIMIT_PER_MINUTE"] = "0"
 os.environ["LOGIN_ATTEMPTS_PER_MINUTE"] = "0"
+# No kernel module here; local-enforcer tests use a fake Netlink socket
+os.environ["LOCAL_ENFORCEMENT"] = "off"
+# Enrichment reads nothing from the developer's machine
+os.environ["THREAT_LISTS_DIR"] = f"{_TMP}/threatlists"
+os.environ["GEOIP_COUNTRY_DB"] = f"{_TMP}/no-country.mmdb"
+os.environ["GEOIP_ASN_DB"] = f"{_TMP}/no-asn.mmdb"
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -176,6 +182,10 @@ def clean_state():
     payload_service.blocklist = {}
     from app.services.baseline import traffic_baseline
     traffic_baseline.reset()
+    from app.services.response import response_engine
+    response_engine.reset()
+    from app.services.local_enforcer import local_enforcer
+    local_enforcer.managed.clear()
     data_collector.close_device()
     data_collector.active_source = None
     data_collector.stats.update(
