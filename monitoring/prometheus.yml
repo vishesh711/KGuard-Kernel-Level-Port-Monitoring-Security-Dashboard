@@ -1,0 +1,14 @@
+# Prometheus for KGuard (roadmap S6.8): scrapes the backend's /metrics with
+# METRICS_TOKEN, which Compose mounts as the secret below.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: kguard
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/metrics_token
+    static_configs:
+      - targets: ["backend:8000"]

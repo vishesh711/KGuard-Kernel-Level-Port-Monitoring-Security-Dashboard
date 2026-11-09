@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     # Agents (remote hosts). Enrollment is disabled while the key is empty.
     agent_enrollment_key: str = ""
 
+    # Bearer token Prometheus sends to GET /metrics (S6.8); empty = /metrics off
+    metrics_token: str = ""
+
     # Detection state (S6.2): sliding windows and alert cooldowns in Redis,
     # so a restart keeps them and several backend processes agree.
     # Empty: kept in memory.

@@ -10,10 +10,11 @@ import logging
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
+from . import metrics
 from .api import (
     agents_router,
     alerts_router,
@@ -204,6 +205,18 @@ async def root():
         "docs": "/docs" if settings.debug else "disabled",
         "health": "/api/health"
     }
+
+
+@app.get("/metrics", tags=["metrics"], response_class=Response)
+async def prometheus_metrics(authorization: str = Header("", include_in_schema=False)):
+    """Prometheus metrics; needs METRICS_TOKEN as a bearer token (not a user login)"""
+    if not settings.metrics_token:
+        raise HTTPException(status_code=404, detail="Metrics are off: set METRICS_TOKEN")
+    if not metrics.token_ok(authorization, settings.metrics_token):
+        raise HTTPException(status_code=401, detail="Wrong metrics token",
+                            headers={"WWW-Authenticate": "Bearer"})
+    body, content_type = metrics.render()
+    return Response(body, media_type=content_type)
 
 
 @app.websocket("/ws")

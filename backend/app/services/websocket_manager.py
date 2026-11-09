@@ -423,9 +423,12 @@ async def broadcast_security_alert(alert_data: dict):
     response engine's automatic rules, and to connected dashboards
     """
     # Imported here: they import the database layer
+    from .. import metrics
     from .packet_capture import packet_capture
     from .response import response_engine
 
+    metrics.ALERTS.labels(alert_data.get("alert_type") or "unknown",
+                          alert_data.get("severity") or "unknown").inc()
     packet_capture.on_alert(alert_data)
     response_engine.on_alert(alert_data)
     message = WebSocketMessage(

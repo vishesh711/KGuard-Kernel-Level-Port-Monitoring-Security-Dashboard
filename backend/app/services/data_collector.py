@@ -18,12 +18,14 @@ import asyncio
 import json
 import logging
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import insert, update
 
+from .. import metrics
 from ..config import settings
 from ..database import SessionLocal
 from ..models.network_event import NetworkEvent
@@ -133,7 +135,12 @@ class DataCollectorService:
         self.stats["last_collection"] = datetime.utcnow()
 
         flow_exporter.observe(stored)
+        if stored:
+            metrics.EVENTS.labels(metrics.host_label(host_id)).inc(len(stored))
+        started = time.perf_counter()
         alerts = await anomaly_detector.analyze_events(stored)
+        if stored:
+            metrics.DETECTION_SECONDS.observe(time.perf_counter() - started)
         if alerts:
             self.stats["alerts_generated"] += len(alerts)
             self._mark_suspicious(alerts)

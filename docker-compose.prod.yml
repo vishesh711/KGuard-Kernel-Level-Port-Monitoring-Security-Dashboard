@@ -21,6 +21,10 @@ services:
       - LOG_FILE=/app/logs/kguard.log
       # Detection windows and cooldowns survive restarts (S6.2)
       - REDIS_URL=redis://redis:6379/0
+      # Agents enroll with this key (kguard-agent enroll --key ...); empty = enrollment off
+      - AGENT_ENROLLMENT_KEY=${AGENT_ENROLLMENT_KEY:-}
+      # Prometheus scrapes /metrics with this token (S6.8)
+      - METRICS_TOKEN=${METRICS_TOKEN:?set METRICS_TOKEN (openssl rand -hex 32)}
       # Signs login tokens; the backend refuses to start without a strong one
       - SECRET_KEY=${SECRET_KEY:?set SECRET_KEY (openssl rand -hex 32)}
       # First admin, created on first start only (or: python -m app.users create)
@@ -139,6 +143,51 @@ services:
         reservations:
           memory: 128M
 
+  # Metrics (S6.8): Prometheus scrapes the backend; Grafana shows the KGuard
+  # dashboard at http://localhost:3001 (user admin, GRAFANA_ADMIN_PASSWORD)
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    secrets:
+      - metrics_token
+    depends_on:
+      - backend
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/kguard-overview.json
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+secrets:
+  metrics_token:
+    environment: METRICS_TOKEN
+
 volumes:
   backend_data:
     driver: local
@@ -147,6 +196,10 @@ volumes:
   postgres_data:
     driver: local
   redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
     driver: local
 
 networks:
