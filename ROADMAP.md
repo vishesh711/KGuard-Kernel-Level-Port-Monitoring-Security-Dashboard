@@ -195,8 +195,9 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
 
 ## Phase 6 — Backend upgrade
 
-- [ ] **S6.1 PostgreSQL and migrations.** Postgres in production (TimescaleDB optional), real Alembic migrations, automatic deletion of old data.
+- [x] **S6.1 PostgreSQL and migrations.** Postgres in production (TimescaleDB optional), real Alembic migrations, automatic deletion of old data.
   *Done when:* `alembic upgrade head` builds the schema from empty; retention job runs daily.
+  *Status:* Done. On PostgreSQL 16 and SQLite, `alembic upgrade head` builds the schema from empty, `alembic check` finds no difference from the models, and downgrade to empty and back works; CI runs this and the full backend suite (178 tests) on PostgreSQL. The backend migrates at start-up (checked by starting it on an empty PostgreSQL database), and upgrades pre-migration databases in place. The retention job runs a minute after start-up and then daily, deleting in batches (tests cover each table, pcap removal, batching, 0 = keep forever, and the daily schedule). The production compose file runs postgres:16. TimescaleDB is not used.
 - [ ] **S6.2 Redis state.** Sliding-window counters for detection in Redis, so restarts don't lose detection state and multiple backend workers agree.
   *Done when:* a scan spread across a backend restart is still detected.
 - [ ] **S6.3 Enrichment.** GeoIP (MaxMind GeoLite2), public bad-IP lists, and MITRE ATT&CK technique IDs on each alert (e.g. port scan → T1046).

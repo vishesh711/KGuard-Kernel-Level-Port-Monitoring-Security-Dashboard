@@ -17,6 +17,7 @@ from ..models.security_alert import AlertSeverity, AlertType, SecurityAlert
 from ..schemas.common import PaginatedResponse, SuccessResponse
 from ..schemas.security_alert import AlertAcknowledge, AlertResolve, AlertStats, SecurityAlertResponse
 from ..services.packet_capture import packet_capture
+from ..utils.time import utc_naive
 from .buckets import bucket_expr, fill_series
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
@@ -363,7 +364,7 @@ async def get_active_alerts_summary(db: Session = Depends(get_db)):
             type_counts[alert_type] = type_counts.get(alert_type, 0) + 1
 
             # Collect recent alerts
-            if alert.timestamp >= recent_cutoff:
+            if utc_naive(alert.timestamp) >= recent_cutoff:
                 recent_alerts.append({
                     "id": alert.id,
                     "type": alert_type,

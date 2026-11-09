@@ -23,6 +23,7 @@ from .services.baseline import traffic_baseline
 from .services.data_collector import data_collector
 from .services.kernel_alerts import kernel_alerts
 from .services.packet_capture import packet_capture
+from .services.retention import retention_job
 from .services.websocket_manager import connection_manager
 
 # Configure logging
@@ -49,6 +50,9 @@ async def periodic_tasks():
             if now >= next_stats:
                 next_stats = now + 30
                 anomaly_detector.cleanup_old_cooldowns()
+                if retention_job.due():
+                    # Batched deletes; off the event loop so the API stays responsive
+                    await loop.run_in_executor(None, retention_job.run)
                 if connection_manager.active_connections:
                     await broadcast_stats_update({
                         "data_collector": data_collector.get_stats(),

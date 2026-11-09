@@ -30,13 +30,47 @@ cp .env.example .env
 
 ### Database Setup
 
+SQLite (the default, `DATABASE_URL=sqlite:///./kguard.db`) suits development
+and small installs. Production uses PostgreSQL 16 (`docker-compose.prod.yml`):
+
+```env
+DATABASE_URL=postgresql+psycopg://kguard:PASSWORD@localhost:5432/kguard
+```
+
+The PostgreSQL database must use UTF-8 encoding (the default for the
+official image; with `createdb`, pass `--encoding UTF8 --template template0`).
+
+The schema is managed by Alembic (`alembic/versions`). The backend runs
+`alembic upgrade head` itself at start-up, so a new or older database is
+brought up to date automatically. A database created before migrations
+existed is upgraded in place, keeping its data, and stamped at the baseline
+revision.
+
 ```bash
-# Initialize database
+# Build or update the schema by hand
 alembic upgrade head
 
-# Create new migration (after model changes)
+# After changing a model: generate a migration and review it
 alembic revision --autogenerate -m "Description"
+
+# Check that the models and the migrations agree (CI runs this)
+alembic check
 ```
+
+### Data retention
+
+A job deletes old data a minute after start-up and then every
+`RETENTION_INTERVAL_HOURS` (24), in batches of `RETENTION_BATCH` rows so a
+large first run never locks a busy table for long:
+
+| Data | Setting | Default |
+|---|---|---|
+| Network events, DNS lookups, TLS handshakes | `RETENTION_EVENTS_DAYS` | 7 |
+| System metrics | `RETENTION_METRICS_DAYS` | 30 |
+| Resolved alerts and their pcap files | `RETENTION_ALERTS_DAYS` | 90 |
+
+Open alerts are never deleted. Set a value to 0 to keep that data forever.
+The last run and what it deleted are shown in `/api/health/detailed`.
 
 ## Running
 
@@ -198,6 +232,13 @@ pytest tests/test_api.py
 
 # Run with verbose output
 pytest -v
+```
+
+The suite uses a temporary SQLite database. To run it against PostgreSQL
+(as CI does), point it at an empty UTF-8 database:
+
+```bash
+KGUARD_TEST_DATABASE_URL=postgresql+psycopg://postgres@localhost:5432/kguard_test pytest
 ```
 
 ## Development

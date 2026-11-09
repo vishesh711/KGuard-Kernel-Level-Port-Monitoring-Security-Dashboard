@@ -10,7 +10,8 @@ import tempfile
 import time
 
 _TMP = tempfile.mkdtemp(prefix="kguard-test-")
-os.environ["DATABASE_URL"] = f"sqlite:///{_TMP}/kguard-test.db"
+# KGUARD_TEST_DATABASE_URL runs the suite against another database (e.g. PostgreSQL)
+os.environ["DATABASE_URL"] = os.environ.get("KGUARD_TEST_DATABASE_URL", f"sqlite:///{_TMP}/kguard-test.db")
 os.environ["PROC_KGUARD_PATH"] = f"{_TMP}/kguard"
 # No device by default, so "auto" falls back to the fake /proc file
 os.environ["KGUARD_DEVICE_PATH"] = f"{_TMP}/kguard-dev"

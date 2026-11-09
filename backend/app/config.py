@@ -115,6 +115,13 @@ class Settings(BaseSettings):
     # column is a JA3 (32 hex) or JA4 fingerprint and whose other columns are
     # a label, e.g. abuse.ch SSLBL's ja3_fingerprints.csv. Empty: no matching.
     tls_fingerprint_blocklist: str = ""
+    # Data retention (retention.py), in days; 0 keeps that data forever.
+    # Open alerts are never deleted automatically.
+    retention_events_days: int = 7
+    retention_metrics_days: int = 30
+    retention_alerts_days: int = 90
+    retention_interval_hours: int = 24
+    retention_batch: int = 10_000
     # IPFIX flow export (flow_export.py): collectors as "host:port"; empty = off
     ipfix_collectors: List[str] = []
     ipfix_idle_timeout: int = 15

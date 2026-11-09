@@ -1,5 +1,4 @@
 # KGuard Development Environment
-version: '3.8'
 
 services:
   backend:

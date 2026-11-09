@@ -1,5 +1,4 @@
 # KGuard Production Environment
-version: '3.8'
 
 services:
   backend:
@@ -14,11 +13,14 @@ services:
       - ./logs:/app/logs
     environment:
       - DEBUG=false
-      - DATABASE_URL=sqlite:///./data/kguard.db
+      - DATABASE_URL=postgresql+psycopg://kguard:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/kguard
       - LOG_LEVEL=INFO
       - SECRET_KEY=${SECRET_KEY}
     depends_on:
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
     # Lets the non-root container user read /proc/kguard. Load the module with
     # the same group: sudo insmod kernel/kguard.ko reader_gid=1500
     group_add:
@@ -65,6 +67,27 @@ services:
         reservations:
           memory: 64M
 
+  # The backend migrates the schema on start-up (alembic upgrade head) and
+  # deletes old data daily (RETENTION_*_DAYS)
+  postgres:
+    image: postgres:16
+    environment:
+      - POSTGRES_USER=kguard
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      - POSTGRES_DB=kguard
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kguard -d kguard"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
   redis:
     image: redis:7-alpine
     volumes:
@@ -86,6 +109,8 @@ services:
 
 volumes:
   backend_data:
+    driver: local
+  postgres_data:
     driver: local
   redis_data:
     driver: local

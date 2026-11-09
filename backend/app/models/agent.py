@@ -11,6 +11,7 @@ from sqlalchemy import BigInteger, Column, DateTime, Integer, String
 from sqlalchemy.sql import func
 
 from ..database import Base
+from ..utils.time import utc_naive
 
 # An agent that has not sent anything for this long is shown as offline
 ONLINE_WINDOW = timedelta(seconds=30)
@@ -39,7 +40,7 @@ class Agent(Base):
         if not self.last_seen:
             return False
         now = now or datetime.utcnow()
-        last = self.last_seen.replace(tzinfo=None)
+        last = utc_naive(self.last_seen)
         return now - last < ONLINE_WINDOW
 
     def to_dict(self) -> dict:

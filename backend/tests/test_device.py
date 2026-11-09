@@ -3,8 +3,6 @@
 import os
 import time
 
-from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine, inspect
-
 from app.models.network_event import NetworkEvent
 from app.models.security_alert import SecurityAlert
 from app.services.data_collector import data_collector
@@ -182,18 +180,6 @@ def test_outgoing_only_traffic_raises_no_alerts(fake_device, collect, db):
     ]])
     collect()
     assert db.query(SecurityAlert).count() == 0
-
-
-def test_old_database_gets_new_columns(tmp_path, monkeypatch):
-    import app.database as database
-
-    old = create_engine(f"sqlite:///{tmp_path}/old.db")
-    Table("network_events", MetaData(), Column("id", Integer, primary_key=True),
-          Column("src_ip", String(45))).create(old)
-    monkeypatch.setattr(database, "engine", old)
-    database._add_missing_columns()
-    columns = {c["name"] for c in inspect(old).get_columns("network_events")}
-    assert {"direction", "process_name", "sock_ino", "netns"} <= columns
 
 
 def test_device_reader_class_reads_once(fake_device):
