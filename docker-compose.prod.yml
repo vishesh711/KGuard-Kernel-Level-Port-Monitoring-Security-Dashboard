@@ -23,6 +23,17 @@ services:
       - REDIS_URL=redis://redis:6379/0
       # Agents enroll with this key (kguard-agent enroll --key ...); empty = enrollment off
       - AGENT_ENROLLMENT_KEY=${AGENT_ENROLLMENT_KEY:-}
+      # Notifications (S6.7): set any of these to turn a channel on
+      - NOTIFY_MIN_SEVERITY=${NOTIFY_MIN_SEVERITY:-HIGH}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - EMAIL_FROM=${EMAIL_FROM:-}
+      - EMAIL_TO=${EMAIL_TO:-[]}
+      - DASHBOARD_URL=${DASHBOARD_URL:-}
       # Prometheus scrapes /metrics with this token (S6.8)
       - METRICS_TOKEN=${METRICS_TOKEN:?set METRICS_TOKEN (openssl rand -hex 32)}
       # Signs login tokens; the backend refuses to start without a strong one

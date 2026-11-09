@@ -186,6 +186,8 @@ def clean_state():
     traffic_baseline.reset()
     from app.services.response import response_engine
     response_engine.reset()
+    from app.services.notifier import notifier
+    notifier.reset()
     from app.services.local_enforcer import local_enforcer
     local_enforcer.managed.clear()
     data_collector.close_device()

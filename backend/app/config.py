@@ -78,6 +78,24 @@ class Settings(BaseSettings):
     # Agents (remote hosts). Enrollment is disabled while the key is empty.
     agent_enrollment_key: str = ""
 
+    # Notifications (S6.7): alerts at or above this severity go to every
+    # configured channel, at most notify_max_per_hour per channel
+    notify_min_severity: str = "HIGH"
+    notify_max_per_hour: int = 30
+    slack_webhook_url: str = ""
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    telegram_api_base: str = "https://api.telegram.org"
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_starttls: bool = True
+    email_from: str = ""
+    email_to: List[str] = []
+    # Link to the dashboard in messages, e.g. https://kguard.example.com
+    dashboard_url: str = ""
+
     # Bearer token Prometheus sends to GET /metrics (S6.8); empty = /metrics off
     metrics_token: str = ""
 

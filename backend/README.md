@@ -364,6 +364,34 @@ uvicorn's WebSocket lines).
   not have. The device is opened read-write only because the reader writes
   its read position into the shared ring header.
 
+## Notifications (Slack, email, Telegram)
+
+Alerts at or above `NOTIFY_MIN_SEVERITY` (`HIGH`) go to every configured
+channel, with the description, addresses, country, threat lists, MITRE
+technique and a link to the dashboard (`DASHBOARD_URL`):
+
+| Channel | Settings |
+|---|---|
+| Slack | `SLACK_WEBHOOK_URL` (an incoming webhook: Slack app, *Incoming Webhooks*) |
+| Telegram | `TELEGRAM_BOT_TOKEN` (from @BotFather), `TELEGRAM_CHAT_ID` |
+| Email | `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_STARTTLS` (true), `EMAIL_FROM`, `EMAIL_TO` (JSON list) |
+
+- Each channel sends at most `NOTIFY_MAX_PER_HOUR` (30) messages per hour;
+  past that, alerts are counted, and the next message says how many were held
+  back.
+- Sending runs in the background, so a slow service never delays detection.
+  Failures are retried three times (honouring `Retry-After`); a 4xx such as
+  a revoked webhook is not retried.
+- Webhook URLs, tokens and passwords never appear in logs or API answers.
+
+Check a channel straight away (admin):
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" localhost:8000/api/notifications/test
+# {"results": {"slack": "sent", "email": "sent"}}
+curl -H "Authorization: Bearer $TOKEN" localhost:8000/api/notifications/status
+```
+
 ## Metrics (Prometheus and Grafana)
 
 `GET /metrics` serves Prometheus metrics. It needs its own bearer token,

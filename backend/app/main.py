@@ -21,6 +21,7 @@ from .api import (
     auth_router,
     events_router,
     health_router,
+    notifications_router,
     payloads_router,
     response_router,
 )
@@ -35,6 +36,7 @@ from .services.data_collector import data_collector
 from .services.enrichment import enricher  # noqa: F401  (registers the alert enrichment hook)
 from .services.kernel_alerts import kernel_alerts
 from .services.local_enforcer import local_enforcer
+from .services.notifier import notifier
 from .services.packet_capture import packet_capture
 from .services.response import response_engine
 from .services.retention import retention_job
@@ -127,6 +129,7 @@ async def lifespan(app: FastAPI):
     ensure_bootstrap_admin()
 
     packet_capture.start()
+    notifier.start()
     background = [
         asyncio.create_task(data_collector.start_collection(), name="data_collector"),
         asyncio.create_task(periodic_tasks(), name="periodic_tasks"),
@@ -140,6 +143,7 @@ async def lifespan(app: FastAPI):
         data_collector.stop_collection()
         kernel_alerts.close()
         local_enforcer.close()
+        await notifier.stop()
         packet_capture.stop()
         for task in background:
             task.cancel()
@@ -193,6 +197,7 @@ app.include_router(health_router)
 app.include_router(agents_router)
 app.include_router(payloads_router, dependencies=logged_in)
 app.include_router(response_router, dependencies=logged_in)
+app.include_router(notifications_router, dependencies=logged_in)
 
 
 @app.get("/")

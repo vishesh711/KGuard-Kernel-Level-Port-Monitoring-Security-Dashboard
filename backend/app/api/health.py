@@ -22,6 +22,7 @@ from ..services.data_collector import data_collector
 from ..services.enrichment import enricher
 from ..services.flow_export import flow_exporter
 from ..services.local_enforcer import local_enforcer
+from ..services.notifier import notifier
 from ..services.packet_capture import packet_capture
 from ..services.payloads import payload_service
 from ..services.response import response_engine
@@ -111,6 +112,7 @@ async def detailed_health_check(db: Session = Depends(get_db)):
             "response": response_engine.get_stats(),
             "local_enforcement": local_enforcer.get_stats(),
             "enrichment": enricher.get_stats(),
+            "notifications": notifier.get_stats(),
             },
             "kernel_module": kernel_status,
             "configuration": {

@@ -429,8 +429,11 @@ async def broadcast_security_alert(alert_data: dict):
 
     metrics.ALERTS.labels(alert_data.get("alert_type") or "unknown",
                           alert_data.get("severity") or "unknown").inc()
+    from .notifier import notifier
+
     packet_capture.on_alert(alert_data)
     response_engine.on_alert(alert_data)
+    notifier.on_alert(alert_data)
     message = WebSocketMessage(
         type="security_alert",
         data=alert_data
