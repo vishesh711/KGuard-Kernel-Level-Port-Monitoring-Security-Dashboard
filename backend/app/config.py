@@ -23,10 +23,22 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/kguard.db"
 
     # Security
-    secret_key: str = "change-this-in-production-very-secret-key"
-    access_token_expire_minutes: int = 30
+    # Signs login tokens. Required: the backend refuses to start without one
+    # (at least 32 characters, e.g. openssl rand -hex 32)
+    secret_key: str = ""
+    # How long a login lasts (one shift)
+    access_token_expire_minutes: int = 480
+    # First admin, created only while there are no users at all
+    admin_username: str = "admin"
+    admin_password: str = ""
+    # Requests per minute per client address to /api (0 = no limit)
+    rate_limit_per_minute: int = 300
+    # Failed logins per minute per address and per username (0 = no limit)
+    login_attempts_per_minute: int = 5
+    # Proxies whose X-Forwarded-For is believed (the frontend's nginx)
+    forwarded_allow_ips: str = "127.0.0.1"
 
-    # CORS
+    # CORS: browser origins that may call the API ("*" is refused)
     allowed_origins: List[str] = [
         "http://localhost:3000",
         "http://localhost:5173",
@@ -34,8 +46,8 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173"
     ]
 
-    # Host names the API answers to when DEBUG is off (TrustedHostMiddleware)
-    allowed_hosts: List[str] = ["localhost", "127.0.0.1", "*.local", "backend"]
+    # Host names the API answers to (TrustedHostMiddleware; "*" is refused)
+    allowed_hosts: List[str] = ["localhost", "127.0.0.1", "backend"]
 
     # Logging
     log_level: str = "INFO"
@@ -165,10 +177,6 @@ class Settings(BaseSettings):
     websocket_heartbeat_interval: int = 30
     # Most network events pushed live per collection cycle (alerts are never capped)
     websocket_max_events_per_batch: int = 20
-
-    # Rate Limiting
-    rate_limit_requests_per_minute: int = 100
-    rate_limit_burst: int = 20
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
 

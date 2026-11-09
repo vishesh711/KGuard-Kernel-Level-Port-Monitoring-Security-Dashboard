@@ -19,6 +19,7 @@ from ..schemas.network_event import (
     NetworkEventStats,
     TrafficSummary,
 )
+from ..services.auth import require_admin
 from .buckets import bucket_expr, fill_series
 
 router = APIRouter(prefix="/api/events", tags=["events"])
@@ -269,7 +270,7 @@ async def get_traffic_summary(
         raise HTTPException(status_code=500, detail=f"Error generating traffic summary: {str(e)}")
 
 
-@router.delete("/cleanup")
+@router.delete("/cleanup", dependencies=[Depends(require_admin)])
 async def cleanup_old_events(
     days: int = Query(30, ge=1, le=365, description="Delete events older than N days"),
     db: Session = Depends(get_db)

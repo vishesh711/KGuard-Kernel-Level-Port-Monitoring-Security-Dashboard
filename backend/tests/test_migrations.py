@@ -7,7 +7,12 @@ from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine, 
 
 import app.database as database
 
-TABLES = {"agents", "dns_queries", "network_events", "security_alerts", "system_metrics", "tls_handshakes"}
+TABLES = set(database.BASELINE_TABLES) | {"users"}
+
+
+def head():
+    from alembic.script import ScriptDirectory
+    return ScriptDirectory.from_config(database.alembic_config()).get_current_head()
 
 
 @pytest.fixture
@@ -30,7 +35,7 @@ def test_empty_database_gets_the_whole_schema(fresh):
     engine = fresh()
     database.init_db()
     assert TABLES <= set(inspect(engine).get_table_names())
-    assert version(engine) == database.BASELINE_REVISION
+    assert version(engine) == head()
 
 
 def test_database_from_before_migrations_keeps_its_data(fresh):
@@ -43,7 +48,7 @@ def test_database_from_before_migrations_keeps_its_data(fresh):
     columns = {c["name"] for c in inspect(engine).get_columns("network_events")}
     assert {"direction", "process_name", "sock_ino", "netns", "ttl", "os_guess"} <= columns
     assert TABLES <= set(inspect(engine).get_table_names())
-    assert version(engine) == database.BASELINE_REVISION
+    assert version(engine) == head()
     with engine.connect() as conn:
         assert conn.execute(text("SELECT src_ip FROM network_events WHERE id = 1")).scalar() == "10.0.0.5"
 
@@ -53,7 +58,7 @@ def test_running_again_changes_nothing(fresh, monkeypatch):
     database.init_db()
     monkeypatch.setattr(database, "_migrated", False)
     database.init_db()
-    assert version(engine) == database.BASELINE_REVISION
+    assert version(engine) == head()
 
 
 def test_models_and_migrations_agree():

@@ -186,7 +186,7 @@ def test_every_line_of_a_real_server_run_is_json(tmp_path):
            "API_HOST": "127.0.0.1", "API_PORT": str(port), "DEBUG": "false",
            "PROC_KGUARD_PATH": str(tmp_path / "none"), "KGUARD_DEVICE_PATH": str(tmp_path / "none"),
            "KGUARD_MODULE_PATH": str(tmp_path / "none"), "LOG_FILE": str(tmp_path / "kguard.log"),
-           "PYTHONWARNINGS": "always"}
+           "PYTHONWARNINGS": "always", "ADMIN_USERNAME": "boot-admin", "ADMIN_PASSWORD": "first admin pw"}
     proc = subprocess.Popen([sys.executable, "-m", "app"], cwd=BACKEND, env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
@@ -199,8 +199,24 @@ def test_every_line_of_a_real_server_run_is_json(tmp_path):
                 time.sleep(0.2)
         else:
             pytest.fail("backend did not start")
-        request = urllib.request.Request(f"{base}/api/alerts/?size=1", headers={"X-Request-ID": "run-check"})
+        login = urllib.request.Request(
+            f"{base}/api/auth/login", method="POST", headers={"Content-Type": "application/json"},
+            data=json.dumps({"username": "boot-admin", "password": "first admin pw"}).encode())
+        token = json.load(urllib.request.urlopen(login, timeout=10))["access_token"]
+        request = urllib.request.Request(f"{base}/api/alerts/?size=1",
+                                         headers={"X-Request-ID": "run-check",
+                                                  "Authorization": f"Bearer {token}"})
         urllib.request.urlopen(request, timeout=5)
+        # A WebSocket connection: uvicorn logs its URL, which carries the token
+        import asyncio
+
+        import websockets
+
+        async def open_ws():
+            async with websockets.connect(f"ws://127.0.0.1:{port}/ws?token={token}") as ws:
+                await ws.send(json.dumps({"type": "ping"}))
+                await asyncio.wait_for(ws.recv(), 5)
+        asyncio.run(open_ws())
         for path in ("/no/such/path", "/api/alerts/not-a-number"):
             try:
                 urllib.request.urlopen(f"{base}{path}", timeout=5)
@@ -222,9 +238,37 @@ def test_every_line_of_a_real_server_run_is_json(tmp_path):
     assert not any("color_message" in e for e in entries)
     assert any(m.startswith("Running upgrade") or m == "Database schema is up to date" for m in messages)
     assert any("Shutting down" in m for m in messages)
-    assert {(e["path"], e["status"]) for e in entries if e["logger"] == "kguard.access"} >= {
+    http = [e for e in entries if e["logger"] == "kguard.access" and "status" in e]
+    assert {(e["path"], e["status"]) for e in http} >= {
         ("/api/health/", 200), ("/api/alerts/", 200), ("/no/such/path", 404),
-        ("/api/alerts/not-a-number", 422)}
+        ("/api/alerts/not-a-number", 401), ("/api/auth/login", 200)}
     assert [e["request_id"] for e in entries if e.get("path") == "/api/alerts/"] == ["run-check"]
+    # The password and token never appear in the log
+    assert "first admin pw" not in output and token not in output
+    assert token.split(".")[2] not in output  # not even the signature
+    assert any("/ws?token=[redacted]" in m for m in messages)
     # The log file got the same lines
     assert len((tmp_path / "kguard.log").read_text().splitlines()) == len(lines)
+
+
+def test_unwritable_log_file_falls_back_to_stdout(tmp_path, capsys):
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("")
+    try:
+        configure_logging(level="INFO", fmt="json", log_file=str(blocker / "kguard.log"))
+        logging.getLogger("test.fallback").info("still logging")
+    finally:
+        configure_logging(log_file="")
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert any("Cannot write LOG_FILE" in e["message"] for e in lines)
+    assert any(e["message"] == "still logging" for e in lines)
+
+
+def test_redaction():
+    from app.logging_setup import redact
+
+    line = '"WebSocket /ws?token=eyJa.b.c&x=1" [accepted]'
+    assert redact(line) == '"WebSocket /ws?token=[redacted]&x=1" [accepted]'
+    assert redact("Authorization: Bearer abc.def-ghi") == "Authorization: Bearer [redacted]"
+    assert redact("access_token=xyz") == "access_token=[redacted]"
+    assert redact("nothing secret") == "nothing secret"

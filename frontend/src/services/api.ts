@@ -11,11 +11,12 @@ import {
   FilterOptions,
   AlertFilterOptions,
 } from '../types'
+import { Role, endSession, getToken } from '../lib/session'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
 // Create axios instance
-const apiClient = axios.create({
+export const apiClient = axios.create({
   baseURL: API_BASE_URL,
   timeout: 10000,
   headers: {
@@ -23,38 +24,42 @@ const apiClient = axios.create({
   },
 })
 
-// Request interceptor
-apiClient.interceptors.request.use(
-  (config) => {
-    // Add any auth headers here if needed
-    return config
-  },
-  (error) => {
-    return Promise.reject(error)
-  },
-)
+// Every request carries the login token
+apiClient.interceptors.request.use((config) => {
+  const token = getToken()
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
 
-// Response interceptor
+// A refused token (expired, revoked, user disabled) ends the session
 apiClient.interceptors.response.use(
-  (response) => {
-    return response
-  },
+  (response) => response,
   (error) => {
-    console.error('API Error:', error)
-
-    // Handle common errors
-    if (error.response?.status === 401) {
-      // Handle unauthorized
-    } else if (error.response?.status >= 500) {
-      // Handle server errors
+    const status = error.response?.status
+    if (status === 401 && !String(error.config?.url ?? '').endsWith('/api/auth/login')) {
+      endSession()
+    } else if (status >= 500) {
       console.error('Server error:', error.response.data)
     }
-
     return Promise.reject(error)
   },
 )
 
+export interface LoginResult {
+  access_token: string
+  token_type: string
+  expires_in: number
+  username: string
+  role: Role
+}
+
 export const api = {
+  // Login
+  async login(username: string, password: string): Promise<LoginResult> {
+    const response = await apiClient.post('/api/auth/login', { username, password })
+    return response.data
+  },
+
   // Network Events
   async getEvents(
     params: {

@@ -52,6 +52,31 @@ UVICORN_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access", "uvicorn.asgi")
 access_logger = logging.getLogger("kguard.access")
 
 
+# Login tokens must never reach a log: uvicorn logs WebSocket URLs, which
+# carry ?token=..., and an error message could quote a header
+_SECRET_PATTERNS = (
+    (re.compile(r"((?:access_)?token=)[^&\s\"']+", re.IGNORECASE), r"\1[redacted]"),
+    (re.compile(r"(Bearer\s+)[A-Za-z0-9._~+/=-]+", re.IGNORECASE), r"\1[redacted]"),
+)
+
+
+def redact(text: str) -> str:
+    for pattern, replacement in _SECRET_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+class RedactFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        cleaned = redact(message)
+        if cleaned != message:
+            record.msg, record.args = cleaned, None
+        if hasattr(record, "color_message"):
+            record.color_message = redact(str(record.color_message))
+        return True
+
+
 class RequestIdFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         if not getattr(record, "request_id", None):
@@ -101,17 +126,23 @@ def configure_logging(level: str = None, fmt: str = None, log_file: str = None,
     formatter = TextFormatter() if fmt == "text" else JsonFormatter()
 
     handlers = [logging.StreamHandler(sys.stdout)]
+    file_error = None
     if log_file:
-        Path(log_file).parent.mkdir(parents=True, exist_ok=True)
-        handlers.append(logging.handlers.RotatingFileHandler(
-            log_file,
-            maxBytes=max_bytes or settings.log_max_bytes,
-            backupCount=settings.log_backup_count if backup_count is None else backup_count,
-            encoding="utf-8",
-        ))
+        try:
+            Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+            handlers.append(logging.handlers.RotatingFileHandler(
+                log_file,
+                maxBytes=max_bytes or settings.log_max_bytes,
+                backupCount=settings.log_backup_count if backup_count is None else backup_count,
+                encoding="utf-8",
+            ))
+        except OSError as e:
+            # A log file we cannot write must not stop the backend
+            file_error = e
     for handler in handlers:
         handler.setFormatter(formatter)
         handler.addFilter(RequestIdFilter())
+        handler.addFilter(RedactFilter())
         handler._kguard = True
 
     # Replace handlers from basicConfig or an earlier call; leave others
@@ -135,6 +166,10 @@ def configure_logging(level: str = None, fmt: str = None, log_file: str = None,
         lg.propagate = True
         lg.setLevel(level)
     logging.getLogger("uvicorn.access").disabled = True
+
+    if file_error is not None:
+        logging.getLogger("kguard").error(
+            f"Cannot write LOG_FILE {log_file}: {file_error}; logging to stdout only")
 
     logging.captureWarnings(True)
     sys.excepthook = _log_uncaught

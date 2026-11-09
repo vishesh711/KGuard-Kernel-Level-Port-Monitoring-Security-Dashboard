@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Bars3Icon, BellIcon } from '@heroicons/react/24/outline'
+import { ArrowRightOnRectangleIcon, Bars3Icon, BellIcon } from '@heroicons/react/24/outline'
+import { useAuth } from '../../context/auth'
 import { useLiveStatus } from '../../context/liveStatus'
 import { useActiveAlerts, useHealth } from '../../hooks/queries'
 
@@ -15,6 +16,7 @@ export function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   const live = useLiveStatus()
+  const { session, logout } = useAuth()
   const health = useHealth()
   const activeAlerts = useActiveAlerts()
 
@@ -84,6 +86,30 @@ export function Header() {
               <span className="text-sm text-gray-600">{live.connected ? 'Live' : 'Offline'}</span>
             </div>
           </div>
+
+          {/* Separator */}
+          <div className="hidden lg:block lg:h-6 lg:w-px lg:bg-gray-200" aria-hidden="true" />
+
+          {/* Signed-in user */}
+          {session && (
+            <div className="flex items-center space-x-2">
+              <span className="text-sm text-gray-700">
+                {session.username}{' '}
+                <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
+                  {session.role}
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={logout}
+                className="rounded p-1 text-gray-400 hover:text-gray-600"
+                title="Sign out"
+              >
+                <span className="sr-only">Sign out</span>
+                <ArrowRightOnRectangleIcon className="h-5 w-5" aria-hidden="true" />
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

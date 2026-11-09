@@ -9,7 +9,7 @@ Agents API: remote hosts running kguard-agent.
   POST /api/agents/ingest   Authorization: Bearer <token>
                             {"agent": {...}, "kernel_dropped": N,
                              "queue_dropped": N, "events": [...]}
-  GET  /api/agents          every agent with its status and counters
+  GET  /api/agents          every agent with its status and counters (login)
 """
 
 import hashlib
@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..database import get_db
 from ..models.agent import Agent
+from ..services import auth
 from ..services.data_collector import data_collector
 from ..services.payloads import payload_service
 
@@ -129,7 +130,7 @@ async def ingest(
             "payloads_accepted": samples.get("accepted", 0)}
 
 
-@router.get("/")
+@router.get("/", dependencies=[Depends(auth.current_user)])
 async def list_agents(db: Session = Depends(get_db)):
     agents = db.query(Agent).order_by(Agent.name).all()
     return [a.to_dict() for a in agents]

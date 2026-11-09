@@ -22,4 +22,8 @@ if __name__ == "__main__":
         reload=settings.debug,
         log_config=None,
         access_log=False,
+        # Behind the frontend's nginx: take the client address from
+        # X-Forwarded-For, but only when nginx sent it
+        proxy_headers=True,
+        forwarded_allow_ips=settings.forwarded_allow_ips,
     )

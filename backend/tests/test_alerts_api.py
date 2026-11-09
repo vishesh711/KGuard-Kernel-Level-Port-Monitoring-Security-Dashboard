@@ -61,11 +61,11 @@ def test_acknowledge_then_resolve(client, db):
 
     item = client.get(f"/api/alerts/{alert.id}").json()
     assert item["acknowledged"] is True
-    assert item["acknowledged_by"] == "analyst"
+    assert item["acknowledged_by"] == "test-admin"  # the logged-in user, not what the client claims
     assert item["resolved"] is True
     assert item["resolution_notes"] == "blocked at firewall"
     assert item["metadata"]["acknowledgment_notes"] == "looking"
-    assert item["metadata"]["resolved_by"] == "analyst"
+    assert item["metadata"]["resolved_by"] == "test-admin"
 
 
 def test_alert_stats(client, db):

@@ -14,8 +14,10 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models.security_alert import AlertSeverity, AlertType, SecurityAlert
+from ..models.user import User
 from ..schemas.common import PaginatedResponse, SuccessResponse
 from ..schemas.security_alert import AlertAcknowledge, AlertResolve, AlertStats, SecurityAlertResponse
+from ..services.auth import require_admin
 from ..services.packet_capture import packet_capture
 from ..utils.time import utc_naive
 from .buckets import bucket_expr, fill_series
@@ -106,7 +108,8 @@ async def get_alert_pcap(alert_id: int):
 async def acknowledge_alert(
     alert_id: int,
     acknowledge_data: AlertAcknowledge,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
 ):
     """
     Acknowledge a security alert
@@ -122,7 +125,7 @@ async def acknowledge_alert(
         # Update alert
         alert.acknowledged = True
         alert.acknowledged_at = datetime.utcnow()
-        alert.acknowledged_by = acknowledge_data.acknowledged_by
+        alert.acknowledged_by = user.username
 
         # Add notes to metadata if provided
         if acknowledge_data.notes:
@@ -151,7 +154,8 @@ async def acknowledge_alert(
 async def resolve_alert(
     alert_id: int,
     resolve_data: AlertResolve,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
 ):
     """
     Resolve a security alert
@@ -173,12 +177,12 @@ async def resolve_alert(
         if not alert.acknowledged:
             alert.acknowledged = True
             alert.acknowledged_at = datetime.utcnow()
-            alert.acknowledged_by = resolve_data.resolved_by
+            alert.acknowledged_by = user.username
 
         # Add resolver to metadata
         alert.alert_metadata = {
             **(alert.alert_metadata or {}),
-            "resolved_by": resolve_data.resolved_by,
+            "resolved_by": user.username,
         }
 
         db.commit()
@@ -297,7 +301,7 @@ async def get_alert_stats(
         raise HTTPException(status_code=500, detail=f"Error calculating alert statistics: {str(e)}")
 
 
-@router.delete("/cleanup")
+@router.delete("/cleanup", dependencies=[Depends(require_admin)])
 async def cleanup_old_alerts(
     days: int = Query(90, ge=1, le=365, description="Delete resolved alerts older than N days"),
     db: Session = Depends(get_db)

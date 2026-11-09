@@ -118,9 +118,9 @@ API_HOST=0.0.0.0
 API_PORT=8000
 DEBUG=true
 
-# Security
-SECRET_KEY=your-secret-key-here
-ACCESS_TOKEN_EXPIRE_MINUTES=30
+# Security (required; see "Login and security" below)
+SECRET_KEY=<output of: openssl rand -hex 32>
+ADMIN_PASSWORD=<first admin's password>
 
 # Logging
 LOG_LEVEL=INFO
@@ -210,6 +210,78 @@ the exported flows, whose packet and byte counts equal tcpdump's for the
 same connection; Wireshark decodes the messages; an nmap scan blocked by the
 kernel gets a pcap of exactly the scanner's packets, including those before
 the alert.
+
+## Login and security
+
+Every endpoint needs a login except `POST /api/auth/login`, the liveness
+probe `GET /api/health/`, `GET /`, and the agents' `enroll` and `ingest`
+(which use the enrollment key and agent tokens). With DEBUG on, the API docs
+(`/docs`, `/openapi.json`) are public too.
+
+**Roles.** `viewer` can read everything. `admin` can also acknowledge and
+resolve alerts, delete old data, and manage users. The user who
+acknowledges or resolves an alert is recorded from the login, not taken
+from the request.
+
+**First admin.** On first start, with no users yet, the backend creates an
+admin from `ADMIN_USERNAME` (default `admin`) and `ADMIN_PASSWORD` (10+
+characters). Or use the command line, which works any time:
+
+```bash
+python -m app.users create alice --role admin   # asks for the password
+python -m app.users list
+python -m app.users set-role bob viewer          # also: set-password, disable, enable, delete
+```
+
+**API.**
+
+```bash
+TOKEN=$(curl -s -H 'Content-Type: application/json' \
+  -d '{"username": "alice", "password": "..."}' localhost:8000/api/auth/login | jq -r .access_token)
+curl -H "Authorization: Bearer $TOKEN" localhost:8000/api/alerts/
+```
+
+| Endpoint | Who |
+|---|---|
+| `POST /api/auth/login` | anyone; returns a token (JWT, HS256, `ACCESS_TOKEN_EXPIRE_MINUTES`, default 8 h) |
+| `GET /api/auth/me`, `POST /api/auth/password` | any user (changing your password ends your other logins) |
+| `GET/POST /api/auth/users`, `PATCH/DELETE /api/auth/users/{name}` | admin |
+| WebSocket `/ws?token=<token>` | any user (browsers cannot send headers on a WebSocket) |
+
+Disabling a user, changing their role or password ends their logins at once:
+the token carries a version number that must match the user's. The last
+active admin cannot be removed, disabled or made a viewer. An open WebSocket
+is checked when it connects; it stays open until it closes.
+
+Passwords are stored as salted scrypt hashes. A wrong username and a wrong
+password get the same answer and take the same time. Tokens and passwords
+never appear in the logs (`token=` and `Bearer` values are redacted, including
+uvicorn's WebSocket lines).
+
+**Hardening.**
+
+- No default `SECRET_KEY`: the backend refuses to start without one of 32+
+  characters, or with a value from old examples. It also refuses `*` in
+  `ALLOWED_ORIGINS` or `ALLOWED_HOSTS`.
+- Rate limits: `RATE_LIMIT_PER_MINUTE` (300) requests per client address to
+  `/api` (agents' ingest and the health probe are exempt), and
+  `LOGIN_ATTEMPTS_PER_MINUTE` (5) failed logins per address and per username;
+  then 429 with `Retry-After`. The client address comes from `X-Forwarded-For`
+  only when the request comes from `FORWARDED_ALLOW_IPS`.
+- CORS: only `ALLOWED_ORIGINS`, no credentials mode (tokens are not cookies),
+  only the methods and headers the dashboard uses.
+- `ALLOWED_HOSTS`: other `Host` headers get 400 (stops DNS rebinding).
+- Every response has `X-Content-Type-Options: nosniff`, `X-Frame-Options:
+  DENY`, `Referrer-Policy: no-referrer` and `Cache-Control: no-store`.
+- Container: runs as user 10001, application code owned by root and
+  read-only, no compiler or curl in the image. The production Compose file
+  adds a read-only root filesystem, `cap_drop: ALL` and `no-new-privileges`,
+  and publishes no backend port (only nginx reaches it).
+- Kernel access without root: the module's `reader_gid` group may read
+  `/proc/kguard` and consume `/dev/kguard`, but changing the module's settings
+  or block lists over Netlink needs `CAP_NET_ADMIN`, which the container does
+  not have. The device is opened read-write only because the reader writes
+  its read position into the shared ring header.
 
 ## Logging
 

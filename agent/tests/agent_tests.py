@@ -295,15 +295,36 @@ def test_module_engine():
 
 # ---------------------------------------------------------------- backend
 
+# The backend needs a signing key and every API call a login (roadmap S6.5);
+# the backend creates this admin on first start
+LAB_AUTH = {"SECRET_KEY": "lab-signing-key-" + "0" * 32, "ADMIN_USERNAME": "lab",
+            "ADMIN_PASSWORD": "lab-admin-password", "RATE_LIMIT_PER_MINUTE": "0",
+            "ALLOWED_HOSTS": json.dumps(["127.0.0.1", "localhost", HOST4])}
+_token = None
+
+
+def api_open(path, timeout=5):
+    """GET an API path as the lab admin (logs in on first use)"""
+    global _token
+    if _token is None:
+        login = json.dumps({"username": LAB_AUTH["ADMIN_USERNAME"], "password": LAB_AUTH["ADMIN_PASSWORD"]})
+        request = urllib.request.Request(API + "/api/auth/login", data=login.encode(),
+                                         headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=timeout) as r:
+            _token = json.loads(r.read())["access_token"]
+    return urllib.request.urlopen(urllib.request.Request(API + path, headers={"Authorization": f"Bearer {_token}"}),
+                                  timeout=timeout)
+
+
 def api(path):
-    with urllib.request.urlopen(API + path, timeout=5) as r:
+    with api_open(path) as r:
         return json.loads(r.read())
 
 
 class Backend:
     def __init__(self):
         self.dir = tempfile.mkdtemp(prefix="kguard-backend-")
-        self.env = dict(os.environ,
+        self.env = dict(os.environ, **LAB_AUTH,
                         DATABASE_URL=f"sqlite:///{self.dir}/kguard.db",
                         KGUARD_SOURCE="device", KGUARD_DEVICE_PATH="/nonexistent",
                         PROC_KGUARD_PATH="/nonexistent", KERNEL_DETECTION="off",
@@ -315,7 +336,8 @@ class Backend:
             [BACKEND_PY, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", str(PORT)],
             cwd=os.path.join(ROOT, "backend"), env=self.env,
             stdout=open(f"{self.dir}/backend.log", "a"), stderr=subprocess.STDOUT)
-        for _ in range(60):
+        # Up to 2 minutes: the test VM emulates the CPU, and start-up hashes the admin password
+        for _ in range(240):
             try:
                 api("/api/health/")
                 return

@@ -6,31 +6,57 @@ services:
       context: ./backend
       dockerfile: Dockerfile
       target: production
-    ports:
-      - "8000:8000"
+    # No published port: only the frontend's nginx reaches the API (/api, /ws)
+    expose:
+      - "8000"
     volumes:
       - backend_data:/app/data
-      - ./logs:/app/logs
+      # A named volume: it takes the image's ownership of /app/logs, so the
+      # non-root user can write it (a host directory would be root's)
+      - backend_logs:/app/logs
     environment:
       - DEBUG=false
       - DATABASE_URL=postgresql+psycopg://kguard:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/kguard
       - LOG_LEVEL=INFO
       - LOG_FILE=/app/logs/kguard.log
-      - SECRET_KEY=${SECRET_KEY}
+      # Signs login tokens; the backend refuses to start without a strong one
+      - SECRET_KEY=${SECRET_KEY:?set SECRET_KEY (openssl rand -hex 32)}
+      # First admin, created on first start only (or: python -m app.users create)
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      # The name users type in the browser; the API refuses other Host headers
+      - ALLOWED_HOSTS=["${KGUARD_HOSTNAME:-localhost}", "localhost", "backend"]
+      - ALLOWED_ORIGINS=["http://${KGUARD_HOSTNAME:-localhost}", "https://${KGUARD_HOSTNAME:-localhost}"]
+      # Client addresses (for rate limits and logs) come from nginx's
+      # X-Forwarded-For; safe because nothing else can reach the backend
+      - FORWARDED_ALLOW_IPS=*
+    # Least privilege: no root, no capabilities, read-only root filesystem
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_started
-    # Lets the non-root container user read /proc/kguard. Load the module with
-    # the same group: sudo insmod kernel/kguard.ko reader_gid=1500
+    # Kernel access without root or CAP_NET_ADMIN: load the module with
+    #   sudo insmod kernel/kguard.ko reader_gid=1500
+    # and members of that group may read /proc/kguard and consume events from
+    # /dev/kguard, but cannot change the module's settings or block lists
+    # (those Netlink commands need CAP_NET_ADMIN, which this container lacks).
     group_add:
       - "${KGUARD_READER_GID:-1500}"
     # Zero-copy event stream. Uncomment once the module is loaded (Docker
     # refuses to start if the device is missing); without it the backend
-    # reads /proc/kguard instead.
+    # reads /proc/kguard instead. "rw" because the reader writes its own
+    # read position into the shared ring header; it has no other effect.
     # devices:
-    #   - /dev/kguard:/dev/kguard
+    #   - /dev/kguard:/dev/kguard:rw
     # To name the process behind each connection, the backend must see the
     # host's processes:
     # pid: host
@@ -42,7 +68,7 @@ services:
         max-size: "10m"
         max-file: "5"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health/', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -58,12 +84,10 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       target: production
+    # The image has its own nginx.conf (frontend/nginx.conf); put TLS in front
+    # of it or extend that file to listen on 443
     ports:
       - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
     depends_on:
       - backend
     restart: unless-stopped
@@ -99,8 +123,7 @@ services:
     image: redis:7-alpine
     volumes:
       - redis_data:/data
-      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
-    command: redis-server /usr/local/etc/redis/redis.conf
+    command: redis-server --appendonly yes
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -116,6 +139,8 @@ services:
 
 volumes:
   backend_data:
+    driver: local
+  backend_logs:
     driver: local
   postgres_data:
     driver: local

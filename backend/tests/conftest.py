@@ -20,6 +20,12 @@ os.environ["KGUARD_MODULE_PATH"] = f"{_TMP}/no-such-module"
 os.environ["DEBUG"] = "true"
 # Keep the background collector idle; tests run collection cycles themselves
 os.environ["DATA_COLLECTION_INTERVAL"] = "3600"
+# Login (S6.5): a signing key, and the test client's host name
+os.environ["SECRET_KEY"] = "test-" + "k" * 40
+os.environ["ALLOWED_HOSTS"] = '["testserver", "localhost", "127.0.0.1"]'
+# Rate limits are tested on their own (test_security.py)
+os.environ["RATE_LIMIT_PER_MINUTE"] = "0"
+os.environ["LOGIN_ATTEMPTS_PER_MINUTE"] = "0"
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -79,10 +85,59 @@ class FakeKernel:
             os.remove(self.path)
 
 
+TEST_PASSWORD = "correct horse battery"
+_PASSWORD_HASH = None
+
+
+def add_test_users():
+    """An admin and a viewer, recreated after every table wipe (same token_version, so tokens survive)"""
+    global _PASSWORD_HASH
+    from app.models.user import User
+    from app.services.auth import hash_password
+
+    _PASSWORD_HASH = _PASSWORD_HASH or hash_password(TEST_PASSWORD)
+    db = SessionLocal()
+    try:
+        for name, role in (("test-admin", "admin"), ("test-viewer", "viewer")):
+            if db.query(User).filter(User.username == name).first():
+                continue
+            db.add(User(username=name, password_hash=_PASSWORD_HASH, role=role,
+                        is_active=True, token_version=0))
+        db.commit()
+    finally:
+        db.close()
+
+
+def token_for(username):
+    from app.models.user import User
+    from app.services.auth import create_token
+
+    db = SessionLocal()
+    try:
+        return create_token(db.query(User).filter(User.username == username).one())
+    finally:
+        db.close()
+
+
 @pytest.fixture(scope="session")
 def client():
+    """Logged in as an admin"""
     with TestClient(app) as test_client:
+        add_test_users()
+        test_client.headers["Authorization"] = f"Bearer {token_for('test-admin')}"
         yield test_client
+
+
+@pytest.fixture
+def anon(client):
+    """Not logged in"""
+    return TestClient(app)
+
+
+@pytest.fixture
+def viewer(client):
+    """Logged in as a viewer"""
+    return TestClient(app, headers={"Authorization": f"Bearer {token_for('test-viewer')}"})
 
 
 @pytest.fixture
@@ -108,6 +163,7 @@ def clean_state():
     with engine.begin() as conn:
         for table in reversed(Base.metadata.sorted_tables):
             conn.execute(table.delete())
+    add_test_users()
     anomaly_detector.reset()
     # Tests use documentation addresses (RFC 5737) as stand-ins for real sources;
     # the bogon rule's own tests turn it back on

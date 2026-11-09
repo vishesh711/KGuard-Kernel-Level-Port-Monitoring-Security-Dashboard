@@ -17,12 +17,15 @@ from ..config import settings
 from ..database import check_db_connection, get_db
 from ..schemas.common import HealthCheck
 from ..services.anomaly_detector import anomaly_detector
+from ..services.auth import current_user
 from ..services.data_collector import data_collector
 from ..services.flow_export import flow_exporter
 from ..services.packet_capture import packet_capture
 from ..services.payloads import payload_service
 from ..services.retention import retention_job
 
+# GET /api/health/ is public (Docker and load balancers probe it); every
+# other health endpoint needs a login
 router = APIRouter(prefix="/api/health", tags=["health"])
 
 # Store startup time for uptime calculation
@@ -65,7 +68,7 @@ async def health_check(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Health check failed: {str(e)}")
 
 
-@router.get("/detailed")
+@router.get("/detailed", dependencies=[Depends(current_user)])
 async def detailed_health_check(db: Session = Depends(get_db)):
     """
     Detailed health check with system metrics
@@ -117,7 +120,7 @@ async def detailed_health_check(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Detailed health check failed: {str(e)}")
 
 
-@router.get("/database")
+@router.get("/database", dependencies=[Depends(current_user)])
 async def database_health(db: Session = Depends(get_db)):
     """
     Database-specific health check
@@ -163,7 +166,7 @@ async def database_health(db: Session = Depends(get_db)):
         }
 
 
-@router.get("/kernel")
+@router.get("/kernel", dependencies=[Depends(current_user)])
 async def kernel_module_health():
     """
     Kernel module specific health check
@@ -217,7 +220,7 @@ def _get_kernel_recommendations(status: dict) -> list:
     return recommendations
 
 
-@router.get("/services")
+@router.get("/services", dependencies=[Depends(current_user)])
 async def services_health():
     """
     Check health of background services
@@ -249,7 +252,7 @@ async def services_health():
         }
 
 
-@router.get("/metrics")
+@router.get("/metrics", dependencies=[Depends(current_user)])
 async def system_metrics():
     """
     Get current system performance metrics

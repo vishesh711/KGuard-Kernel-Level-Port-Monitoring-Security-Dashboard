@@ -49,6 +49,9 @@ def get_db() -> Generator[Session, None, None]:
 
 # Revision that matches the schema of databases made before migrations existed
 BASELINE_REVISION = "0001"
+# The tables that revision has; later tables come from their own migrations
+BASELINE_TABLES = ("agents", "dns_queries", "network_events", "security_alerts",
+                   "system_metrics", "tls_handshakes")
 ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
 _migrated = False
 
@@ -95,10 +98,11 @@ def _add_missing_columns(conn) -> None:
     Bring a pre-migration database to the baseline: create_all() for tables it
     lacks, then any missing nullable column (create_all never alters tables).
     """
-    Base.metadata.create_all(bind=conn)
+    baseline = [t for t in Base.metadata.sorted_tables if t.name in BASELINE_TABLES]
+    Base.metadata.create_all(bind=conn, tables=baseline)
     inspector = inspect(conn)
     quote = conn.dialect.identifier_preparer.quote
-    for table in Base.metadata.sorted_tables:
+    for table in baseline:
         existing = {column["name"] for column in inspector.get_columns(table.name)}
         for column in table.columns:
             if column.name in existing:
