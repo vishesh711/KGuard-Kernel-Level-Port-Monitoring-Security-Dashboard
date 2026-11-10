@@ -1,0 +1,80 @@
+name: Fuzz
+
+# Roadmap P8.8: fuzz the parsers that read attacker-controlled bytes.
+# Each night every target runs for FUZZ_SECONDS, starting from the corpus
+# the previous night left in the cache, so the hours add up. A crash fails
+# the job and uploads the input that caused it.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "Seconds per target"
+        default: "3600"
+
+env:
+  FUZZ_SECONDS: ${{ github.event.inputs.seconds || '3600' }}
+
+jobs:
+  tcp-options:
+    name: TCP options parser (libFuzzer, C)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang
+        run: sudo apt-get update && sudo apt-get install -y clang
+      - uses: actions/cache@v4
+        with:
+          path: fuzz-corpus
+          key: fuzz-tcp-options-${{ github.run_id }}
+          restore-keys: fuzz-tcp-options-
+      - name: Build
+        run: make -C kernel fuzz
+      - name: Fuzz
+        run: |
+          mkdir -p fuzz-corpus crashes
+          cp -n kernel/tests/fuzz/corpus/* fuzz-corpus/
+          kernel/tests/fuzz/tcp_options_fuzz -max_total_time=$FUZZ_SECONDS -print_final_stats=1 \
+            -artifact_prefix=crashes/ fuzz-corpus
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-tcp-options
+          path: crashes/
+
+  python-parsers:
+    name: ${{ matrix.target }} parser (Atheris)
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [tls, dns]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - name: Install
+        working-directory: backend
+        run: pip install -r requirements.txt atheris
+      - uses: actions/cache@v4
+        with:
+          path: backend/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-${{ matrix.target }}-
+      - name: Fuzz
+        working-directory: backend
+        run: |
+          python fuzz/seed.py
+          mkdir -p crashes
+          python fuzz/fuzz_${{ matrix.target }}.py -max_total_time=$FUZZ_SECONDS -print_final_stats=1 \
+            -artifact_prefix=crashes/ fuzz/corpus/${{ matrix.target }}
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-${{ matrix.target }}
+          path: backend/crashes/
