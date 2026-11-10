@@ -1,6 +1,10 @@
-import axios from 'axios'
+import axios, { isAxiosError } from 'axios'
 import {
   AgentInfo,
+  AllowEntry,
+  AuditEntry,
+  Block,
+  ResponseStatus,
   NetworkEvent,
   SecurityAlert,
   NetworkEventStats,
@@ -122,14 +126,34 @@ export const api = {
     return response.data
   },
 
-  async acknowledgeAlert(id: number, data: { acknowledged_by: string; notes?: string }) {
+  /** The backend records the logged-in user as the one who acknowledged */
+  async acknowledgeAlert(id: number, data: { notes?: string } = {}) {
     const response = await apiClient.post(`/api/alerts/${id}/acknowledge`, data)
     return response.data
   },
 
-  async resolveAlert(id: number, data: { resolved_by: string; resolution_notes: string }) {
+  async resolveAlert(id: number, data: { resolution_notes: string }) {
     const response = await apiClient.post(`/api/alerts/${id}/resolve`, data)
     return response.data
+  },
+
+  async getEventsByIds(ids: number[]): Promise<NetworkEvent[]> {
+    if (!ids.length) return []
+    const response = await apiClient.get('/api/events/', {
+      params: { ids: ids.slice(-100).join(','), size: 100 },
+    })
+    return response.data.items
+  },
+
+  /** The alert's packet capture as a file download (null if there is none) */
+  async downloadPcap(id: number): Promise<Blob | null> {
+    try {
+      const response = await apiClient.get(`/api/alerts/${id}/pcap`, { responseType: 'blob' })
+      return response.data
+    } catch (e) {
+      if (isAxiosError(e) && e.response?.status === 404) return null
+      throw e
+    }
   },
 
   async getAlertStats(hours: number = 24): Promise<AlertStats> {
@@ -141,6 +165,48 @@ export const api = {
 
   async getActiveAlertsSummary() {
     const response = await apiClient.get('/api/alerts/active/summary')
+    return response.data
+  },
+
+  // Response engine: blocks, allowlist, audit log
+  async getBlocks(includeRemoved = false): Promise<Block[]> {
+    const response = await apiClient.get('/api/response/blocks', {
+      params: includeRemoved ? { include_removed: true } : {},
+    })
+    return response.data
+  },
+
+  async addBlock(body: { cidr: string; reason: string; minutes?: number | null; host_id?: number | null }) {
+    const response = await apiClient.post('/api/response/blocks', body)
+    return response.data as Block & { created: boolean }
+  },
+
+  async removeBlock(id: number) {
+    const response = await apiClient.delete(`/api/response/blocks/${id}`)
+    return response.data as Block
+  },
+
+  async getAllowlist(): Promise<AllowEntry[]> {
+    const response = await apiClient.get('/api/response/allowlist')
+    return response.data
+  },
+
+  async addAllow(body: { cidr: string; note?: string }) {
+    const response = await apiClient.post('/api/response/allowlist', body)
+    return response.data as AllowEntry
+  },
+
+  async removeAllow(id: number) {
+    await apiClient.delete(`/api/response/allowlist/${id}`)
+  },
+
+  async getAudit(page = 1, size = 50): Promise<{ items: AuditEntry[]; total: number }> {
+    const response = await apiClient.get('/api/response/audit', { params: { page, size } })
+    return response.data
+  },
+
+  async getResponseStatus(): Promise<ResponseStatus> {
+    const response = await apiClient.get('/api/response/status')
     return response.data
   },
 

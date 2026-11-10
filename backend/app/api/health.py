@@ -82,7 +82,9 @@ async def detailed_health_check(db: Session = Depends(get_db)):
         basic_health = await health_check(db)
 
         # System metrics
-        cpu_percent = psutil.cpu_percent(interval=1)
+        # interval=None: usage since the last call, without blocking the
+        # event loop for a second (interval=1 stalled every request)
+        cpu_percent = psutil.cpu_percent(interval=None)
         memory = psutil.virtual_memory()
         disk = psutil.disk_usage('/')
 
@@ -109,10 +111,10 @@ async def detailed_health_check(db: Session = Depends(get_db)):
                 "payloads": payload_service.get_stats(),
                 "packet_capture": packet_capture.get_stats(),
                 "retention": retention_job.get_stats(),
-            "response": response_engine.get_stats(),
-            "local_enforcement": local_enforcer.get_stats(),
-            "enrichment": enricher.get_stats(),
-            "notifications": notifier.get_stats(),
+                "response": response_engine.get_stats(),
+                "local_enforcement": local_enforcer.get_stats(),
+                "enrichment": enricher.get_stats(),
+                "notifications": notifier.get_stats(),
             },
             "kernel_module": kernel_status,
             "configuration": {
@@ -120,7 +122,10 @@ async def detailed_health_check(db: Session = Depends(get_db)):
                 "log_level": settings.log_level,
                 "database_url": settings.database_url.split("://")[0] + "://***",  # Hide credentials
                 "collection_interval": settings.data_collection_interval,
-                "port_scan_threshold": settings.port_scan_threshold
+                "port_scan_threshold": settings.port_scan_threshold,
+                "retention_days": {"events": settings.retention_events_days,
+                                   "metrics": settings.retention_metrics_days,
+                                   "resolved_alerts": settings.retention_alerts_days},
             }
         }
 
@@ -267,7 +272,9 @@ async def system_metrics():
     """
     try:
         # CPU metrics
-        cpu_percent = psutil.cpu_percent(interval=1)
+        # interval=None: usage since the last call, without blocking the
+        # event loop for a second (interval=1 stalled every request)
+        cpu_percent = psutil.cpu_percent(interval=None)
         cpu_count = psutil.cpu_count()
 
         # Memory metrics

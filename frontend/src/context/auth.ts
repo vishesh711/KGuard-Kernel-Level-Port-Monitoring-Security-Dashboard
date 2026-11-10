@@ -17,3 +17,8 @@ export const AuthContext = createContext<AuthState>({
 export function useAuth() {
   return useContext(AuthContext)
 }
+
+/** True when the logged-in user may change things (acknowledge, block, ...) */
+export function useIsAdmin() {
+  return useContext(AuthContext).session?.role === 'admin'
+}
