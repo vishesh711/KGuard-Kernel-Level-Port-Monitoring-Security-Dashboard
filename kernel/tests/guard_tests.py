@@ -130,6 +130,19 @@ def test_scan_alert_monitor_only():
     h.check("monitor mode: scanner can still connect", reach())
 
 
+def test_scan_with_colliding_ports():
+    """K3.2: ports chosen 1024 apart are still distinct ports (they shared one bitmap bit
+    when the bit was port % 1024, so such a scan was never counted)"""
+    reset_guard()
+    ports = ",".join(str(22 + 1024 * k) for k in range(40))
+    with AlertWatch() as watch:
+        nmap_attacker(ports)
+        alerts = watch.alerts()
+    scans = [a for a in alerts if a["type"] == "scan" and a["src_ip"] == ATK4]
+    h.check("a scan of 40 ports 1024 apart (22, 1046, 2070, ...) raises a scan alert", scans,
+            scans[0] if scans else alerts)
+
+
 def test_block_needs_enforce():
     """K3.5: a block in monitor mode is only counted, never enforced"""
     reset_guard()
@@ -408,7 +421,8 @@ def test_source_table_cap():
 def run_all():
     h.load()
     with Lab():
-        for test in (test_scan_alert_monitor_only, test_block_needs_enforce, test_block_and_expiry,
+        for test in (test_scan_alert_monitor_only, test_scan_with_colliding_ports,
+                     test_block_needs_enforce, test_block_and_expiry,
                      test_ipv6_block, test_allowlist_wins, test_local_never_blocked, test_syn_rate_limit,
                      test_auto_block, test_spoofed_sources):
             try:
