@@ -26,6 +26,7 @@
  */
 
 #include "kguard.h"
+#include "kguard_compat.h"
 
 #include <linux/inet.h>
 #include <linux/jiffies.h>

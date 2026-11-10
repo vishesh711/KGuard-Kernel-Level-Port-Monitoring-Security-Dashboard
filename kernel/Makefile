@@ -30,10 +30,15 @@ clean:
 # kguard_trace.h is left out: TRACE_EVENT() blocks follow the tracing
 # subsystem's own layout, which checkpatch's generic rules flag.
 CHECKPATCH ?= $(KDIR)/scripts/checkpatch.pl
-CHECKPATCH_FILES := $(filter-out src/kguard_trace.h,$(wildcard src/*.c src/*.h)) \
+# kguard_compat.h is checked on its own without the LINUX_VERSION_CODE rules:
+# an out-of-tree module that builds on several kernels needs version tests,
+# and they are kept to that one file.
+CHECKPATCH_FILES := $(filter-out src/kguard_trace.h src/kguard_compat.h,$(wildcard src/*.c src/*.h)) \
 		    $(wildcard include/uapi/linux/*.h)
 checkpatch:
 	perl $(CHECKPATCH) --no-tree --strict --terse -f $(CHECKPATCH_FILES)
+	perl $(CHECKPATCH) --no-tree --strict --terse --ignore LINUX_VERSION_CODE,CONSTANT_COMPARISON \
+		-f src/kguard_compat.h
 
 # sparse (make C=2): type, address-space and endianness checks on every
 # source file. Fails on any warning (sparse itself never fails the build).
