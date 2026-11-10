@@ -109,6 +109,45 @@ jobs:
       - name: Type-check and build
         run: npm run build
 
+  compose:
+    name: Docker stacks start (${{ matrix.stack }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: [dev, prod]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Settings
+        run: |
+          {
+            echo "SECRET_KEY=$(openssl rand -hex 32)"
+            echo "ADMIN_USERNAME=admin"
+            echo "ADMIN_PASSWORD=ci-password-123"
+            echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
+            echo "METRICS_TOKEN=$(openssl rand -hex 16)"
+            echo "GRAFANA_ADMIN_PASSWORD=ci-password-456"
+            echo "KGUARD_HOSTNAME=localhost"
+          } > .env
+          if [ "${{ matrix.stack }}" = prod ]; then
+            echo "FILES=-f docker-compose.prod.yml" >> "$GITHUB_ENV"
+            echo "LOGIN_URL=http://localhost/api/auth/login" >> "$GITHUB_ENV"
+          else
+            echo "FILES=-f docker-compose.yml" >> "$GITHUB_ENV"
+            echo "LOGIN_URL=http://localhost:8000/api/auth/login" >> "$GITHUB_ENV"
+          fi
+      - name: Build and start
+        run: docker compose $FILES up -d --build --wait --wait-timeout 300
+      - name: Every container is running, and the admin can log in
+        run: |
+          docker compose $FILES ps -a
+          test -z "$(docker compose $FILES ps -a --status exited --status restarting -q)"
+          curl -fsS -X POST "$LOGIN_URL" -H 'Content-Type: application/json' \
+            -d '{"username":"admin","password":"ci-password-123"}' | grep -q access_token
+      - name: Logs
+        if: failure()
+        run: docker compose $FILES logs --tail 50
+
   kernel:
     name: Kernel module
     runs-on: ubuntu-latest
