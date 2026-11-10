@@ -96,8 +96,8 @@ export function Dashboard() {
 
       {backendDown && (
         <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800" role="alert">
-          Can&apos;t reach the KGuard backend. Check that it is running and that VITE_API_BASE_URL points to
-          it.
+          Can&apos;t reach the KGuard backend. Check that it is running (and, if the dashboard is served apart
+          from it, that VITE_API_BASE_URL points to it).
         </div>
       )}
 

@@ -128,7 +128,7 @@ def render(app) -> str:
         "# KGuard API reference",
         "",
         "Generated from the backend by `python -m app.apidoc` (CI fails when this file is out of date).",
-        "The live, interactive version is at `/docs` on a running backend",
+        "A backend started with `DEBUG=true` also serves an interactive version at `/docs`",
         "(OpenAPI schema at `/openapi.json`).",
         "",
         "**Authentication.** Log in with `POST /api/auth/login` and send the returned `access_token` as",

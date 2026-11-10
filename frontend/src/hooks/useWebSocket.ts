@@ -3,7 +3,10 @@ import { ConnectionStatus, WebSocketMessage } from '../types'
 import toast from 'react-hot-toast'
 import { getToken } from '../lib/session'
 
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws'
+// Same host as the page by default (proxied to the backend), wss on https
+const WS_URL =
+  import.meta.env.VITE_WS_URL ||
+  `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`
 const RECONNECT_INTERVAL = 3000
 const MAX_RECONNECT_ATTEMPTS = 5
 

@@ -14,7 +14,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
-from . import metrics
+from . import __version__, metrics
 from .api import (
     agents_router,
     alerts_router,
@@ -179,7 +179,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="KGuard Security Monitoring API",
     description="Backend API for KGuard kernel-level network monitoring and security dashboard",
-    version="1.0.0",
+    version=__version__,
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
     lifespan=lifespan
@@ -225,7 +225,7 @@ async def root():
     """Root endpoint with basic API information"""
     return {
         "name": "KGuard Security Monitoring API",
-        "version": "1.0.0",
+        "version": __version__,
         "status": "running",
         "docs": "/docs" if settings.debug else "disabled",
         "health": "/api/health"

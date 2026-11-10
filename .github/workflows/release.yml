@@ -1,0 +1,104 @@
+name: Release
+
+# Runs when a version tag is pushed (git tag v2.0.0 && git push origin v2.0.0).
+# Builds the agent, packages the kernel module source for DKMS, publishes the
+# container images to GitHub's registry, and creates the GitHub release with
+# the notes in docs/releases/<tag>.md.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  agent:
+    name: Agent binary (x86_64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libbpf-dev libelf-dev zlib1g-dev libcurl4-openssl-dev \
+            linux-tools-common "linux-tools-$(uname -r)"
+      - name: Build
+        run: make -C agent
+      - name: Package
+        run: |
+          name=kguard-agent-${GITHUB_REF_NAME}-linux-x86_64
+          mkdir -p "dist/$name"
+          cp agent/build/kguard-agent agent/kguard-agent.service agent/kguard-agent.default \
+            agent/README.md "dist/$name/"
+          printf 'Built on Ubuntu 24.04. Needs libbpf1, libelf1, zlib1g and libcurl4 at run time,\nand a kernel with BTF (5.17+) for the eBPF engine. See README.md.\n' > "dist/$name/RUNTIME.txt"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent
+          path: dist/*.tar.gz
+
+  module:
+    name: Kernel module source (DKMS)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package
+        run: |
+          version=$(sed -n 's/^#define KGUARD_MODULE_VERSION[[:space:]]*"\(.*\)"/\1/p' kernel/src/kguard.h)
+          name=kguard-module-$version
+          mkdir -p "dist/$name"
+          cp -r kernel/Makefile kernel/src kernel/include kernel/README.md "dist/$name/"
+          sed "s/@VERSION@/$version/" kernel/dkms.conf > "dist/$name/dkms.conf"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: module
+          path: dist/*.tar.gz
+
+  images:
+    name: Container images
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        component: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image name
+        id: name
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kguard-${{ matrix.component }}" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.component }}
+          target: production
+          push: true
+          tags: |
+            ${{ steps.name.outputs.image }}:${{ github.ref_name }}
+            ${{ steps.name.outputs.image }}:latest
+
+  release:
+    name: GitHub release
+    needs: [agent, module, images]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum *.tar.gz > SHA256SUMS
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes=docs/releases/${GITHUB_REF_NAME}.md
+          test -f "$notes" || { echo "missing $notes"; exit 1; }
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/SHA256SUMS \
+            --title "KGuard ${GITHUB_REF_NAME#v}" --notes-file "$notes"

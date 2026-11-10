@@ -282,16 +282,21 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
 
 ## Phase 9 — Documentation and release
 
-- [ ] **D9.1 Honest README.** Remove unverified claims ("100% complete", "10,000+ packets/sec"); show real benchmark numbers, a short demo GIF and the architecture diagram.
+- [x] **D9.1 Honest README.** Remove unverified claims ("100% complete", "10,000+ packets/sec"); show real benchmark numbers, a short demo GIF and the architecture diagram.
   *Done when:* every number in the README links to its source.
-- [ ] **D9.2 Design write-up.** `docs/DESIGN.md`: why per-CPU rings, why RCU, Netfilter vs XDP, the mmap interface, packet path walkthrough, trade-offs and what was measured.
+  *Status:* Done. README rewritten: what KGuard does, the architecture diagram (`docs/images/architecture.svg`), a demo GIF of real attacks (nmap SYN and Xmas scans, an hping3 SYN flood) against the module in a VM, recorded by `scripts/demo/make_demo.sh` (nothing simulated), and a "Measured" table where each number links to the CI workflow or roadmap item it comes from. No throughput claim: nothing has been measured on real hardware. Static "build passing"/"Kubernetes ready" badges replaced by real workflow badges; LICENSE (GPL-2.0, as declared) added. Checking the README's install steps on a fresh clone found that the production dashboard image could not be built and pointed the browser at `localhost:8000`; both fixed, and the stack then came up from a fresh clone: dashboard, login, roles (anonymous 401), Grafana, and Prometheus scraping the backend. (In this sandbox the container builds needed its proxy and CA injected into a scratch copy; the repository's Dockerfiles are unchanged by that.) The module itself cannot be loaded on this sandbox's host kernel; it is covered by the CI kernel matrix and the DKMS install test.
+- [x] **D9.2 Design write-up.** `docs/DESIGN.md`: why per-CPU rings, why RCU, Netfilter vs XDP, the mmap interface, packet path walkthrough, trade-offs and what was measured.
   *Done when:* each major design choice has a "why" and an alternative considered.
-- [ ] **D9.3 Threat model.** What KGuard detects, what it doesn't, and how an attacker could evade it.
+  *Status:* Done. `docs/DESIGN.md`: goals, the packet path end to end, twelve decisions (both engines, hook points, per-CPU rings, mmap device, binary event, RCU source table and bitmap, kernel/user detection split, fail-safe enforcement, Generic Netlink, the C agent, leases, PostgreSQL and Redis), each with why, the alternatives considered and what was measured, plus trade-offs and a table of evidence.
+- [x] **D9.3 Threat model.** What KGuard detects, what it doesn't, and how an attacker could evade it.
   *Done when:* `docs/THREAT_MODEL.md` covers every detection in Phase 5.
-- [ ] **D9.4 Clean up docs.** Merge or remove overlapping docs (`DEPLOYMENT.md`, `docs/DEPLOYMENT_GUIDE.md`, `PROJECT_SUMMARY.md`, `COMMIT_NOTES.md`); update the `.kiro` specs or mark them historical.
+  *Status:* Done. `docs/THREAT_MODEL.md`: attackers in and out of scope, what KGuard cannot see, every Phase 5 detection (N5.0 to N5.11, plus the kernel guard) with its triggers, misses and evasions, and attacks on KGuard itself. Writing it found a real evasion: ports 1024 apart shared one bit of the scan bitmap, so such a scan was never counted; fixed with a keyed hash, with a guard test that fails on the old module and passes on the new.
+- [x] **D9.4 Clean up docs.** Merge or remove overlapping docs (`DEPLOYMENT.md`, `docs/DEPLOYMENT_GUIDE.md`, `PROJECT_SUMMARY.md`, `COMMIT_NOTES.md`); update the `.kiro` specs or mark them historical.
   *Done when:* one clear source for each topic.
+  *Status:* Done. Removed PROJECT_SUMMARY.md, COMMIT_NOTES.md, DEPLOYMENT.md, docs/DEPLOYMENT_GUIDE.md, docs/TECHNICAL_DOCUMENTATION.md and docs/API_DOCUMENTATION.md (2025 originals). One guide per topic, indexed in `docs/README.md`: `docs/DEPLOYMENT.md` (with a DKMS install, an agent systemd unit and a compose override for the kernel device, all new), and `docs/API.md` generated from the code, with a test that checks each endpoint's access level by calling it and fails when the file is out of date. `.kiro/specs` marked historical.
 - [ ] **D9.5 Release v2.0.** Tag, changelog, release notes with benchmark results; publish agent binaries and container images.
   *Done when:* the GitHub release exists, and install from the README works on a fresh VM.
+  *Status:* Prepared, not published. CHANGELOG.md, release notes with the benchmark results (`docs/releases/v2.0.0.md`), versions set to 2.0.0 (backend, dashboard, agent; the module keeps its own 3.0.0), and `.github/workflows/release.yml`, which on a `v*` tag builds the agent, packages the module source for DKMS, pushes the backend and dashboard images to ghcr.io and creates the release. Tagging and publishing need the repository owner's go-ahead; the release workflow has not run yet.
 
 ---
 

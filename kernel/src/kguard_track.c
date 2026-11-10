@@ -12,8 +12,11 @@
  *
  *   Per source:
  *     - a 1024-bit bitmap of destination ports tried in the current window
- *       (distinct-port count for scan detection; ports share bits modulo
- *       1024, which only matters far above any useful threshold)
+ *       (distinct-port count for scan detection). A port's bit is a keyed
+ *       hash of it (siphash, key drawn at load time): a plain "port % 1024"
+ *       let a scanner pick ports 1024 apart, which all share one bit, and
+ *       never be counted. Random collisions undercount by about n^2/2048
+ *       ports after n distinct ones, under 0.2 at the default threshold.
  *     - a token bucket for TCP SYNs (rate limiting)
  *
  * Blocklist
@@ -30,7 +33,9 @@
 
 #include <linux/inet.h>
 #include <linux/jiffies.h>
+#include <linux/random.h>
 #include <linux/rhashtable.h>
+#include <linux/siphash.h>
 #include <linux/slab.h>
 #include <linux/workqueue.h>
 #include <net/addrconf.h>
@@ -39,6 +44,9 @@
 #include <net/route.h>
 
 #define KGUARD_PORT_BITS	1024
+
+/* Maps ports to bitmap bits; secret so that collisions cannot be chosen */
+static siphash_key_t kguard_port_key __read_mostly;
 #define KGUARD_ALLOW_MAX	256
 #define KGUARD_BLOCK_MAX	65536
 #define KGUARD_GC_PERIOD	HZ
@@ -277,7 +285,8 @@ int kguard_track_attempt(struct net *net, const struct kguard_addr *addr,
 		src->attempts = 0;
 		src->window_start_ns = now;
 	}
-	if (!__test_and_set_bit(dport % KGUARD_PORT_BITS, src->port_bits))
+	if (!__test_and_set_bit(siphash_1u32(dport, &kguard_port_key) % KGUARD_PORT_BITS,
+				src->port_bits))
 		src->ports++;
 	src->attempts++;
 
@@ -645,6 +654,8 @@ int kguard_track_init(unsigned int max_sources, unsigned int idle_timeout,
 
 	kguard_max_sources = max(max_sources, 16U);
 	kguard_idle_ns = (u64)max(idle_timeout, 1U) * NSEC_PER_SEC;
+
+	get_random_bytes(&kguard_port_key, sizeof(kguard_port_key));
 
 	/*
 	 * Unmerged, so its size shows in /proc/slabinfo and any leak is
