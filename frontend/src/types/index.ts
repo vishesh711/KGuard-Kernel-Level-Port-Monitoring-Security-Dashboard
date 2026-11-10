@@ -48,6 +48,14 @@ export interface AgentInfo {
   events_received: number
   kernel_dropped: number
   queue_dropped: number
+  /** Over the last minute */
+  events_per_second?: number
+  blocklist?: {
+    applied: string | null
+    failed: number | null
+    enforcing: boolean | null
+    synced_at: string | null
+  }
 }
 
 export interface SecurityAlert {

@@ -7,6 +7,7 @@ import {
   CogIcon,
   ShieldCheckIcon,
   ServerStackIcon,
+  NoSymbolIcon,
 } from '@heroicons/react/24/outline'
 import { ConnectionStatus } from '../ui/ConnectionStatus'
 
@@ -16,6 +17,7 @@ const navigation = [
   { name: 'Security Alerts', href: '/alerts', icon: ExclamationTriangleIcon },
   { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
   { name: 'Hosts', href: '/hosts', icon: ServerStackIcon },
+  { name: 'Blocked', href: '/blocks', icon: NoSymbolIcon },
   { name: 'Settings', href: '/settings', icon: CogIcon },
 ]
 

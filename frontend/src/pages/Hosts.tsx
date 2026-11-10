@@ -21,6 +21,14 @@ function StatusPill({ online }: { online: boolean }) {
   )
 }
 
+function BlocklistState({ agent }: { agent: AgentInfo }) {
+  const b = agent.blocklist
+  if (!b?.synced_at) return <span className="text-gray-400">never synced</span>
+  if (b.enforcing === false) return <span className="text-yellow-700">monitor only</span>
+  if (b.failed) return <span className="text-red-700">{b.failed} not applied</span>
+  return <span className="text-green-700">enforcing</span>
+}
+
 function HostRow({ agent }: { agent: AgentInfo }) {
   const lost = agent.kernel_dropped + agent.queue_dropped
   return (
@@ -42,6 +50,9 @@ function HostRow({ agent }: { agent: AgentInfo }) {
           : 'Never'}
       </td>
       <td className="px-4 py-3 text-right text-sm tabular-nums text-gray-900">
+        {(agent.events_per_second ?? 0).toLocaleString(undefined, { maximumFractionDigits: 1 })}
+      </td>
+      <td className="px-4 py-3 text-right text-sm tabular-nums text-gray-900">
         {agent.events_received.toLocaleString()}
       </td>
       <td
@@ -49,6 +60,9 @@ function HostRow({ agent }: { agent: AgentInfo }) {
         title={`Kernel: ${agent.kernel_dropped}, agent queue: ${agent.queue_dropped}`}
       >
         {lost.toLocaleString()}
+      </td>
+      <td className="px-4 py-3 text-sm">
+        <BlocklistState agent={agent} />
       </td>
     </tr>
   )
@@ -87,8 +101,10 @@ export function Hosts() {
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Engine</th>
                 <th className="px-4 py-3">Last seen</th>
+                <th className="px-4 py-3 text-right">Events/s</th>
                 <th className="px-4 py-3 text-right">Events</th>
                 <th className="px-4 py-3 text-right">Lost</th>
+                <th className="px-4 py-3">Blocklist</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 bg-white">
