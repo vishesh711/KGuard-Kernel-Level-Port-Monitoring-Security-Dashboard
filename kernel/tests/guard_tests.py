@@ -299,12 +299,14 @@ for i in range({count}):
         try:
             raw.sendto(ip + udp, ("{HOST4}", 0))
             break
-        except OSError as e:  # ENOBUFS: the queue is full (fast, KVM-backed VMs); wait for room
-            if e.errno != 105:
+        except OSError as e:  # ENOBUFS/EAGAIN: the queue is full (fast, KVM-backed VMs); wait for room
+            if e.errno not in (105, 11):
                 raise
             time.sleep(0.001)
 """
-    in_ns([sys.executable, "-c", code], check=True)
+    result = in_ns([sys.executable, "-c", code])
+    if result.returncode:  # show the sender's own error, not just its exit status
+        raise RuntimeError(f"spoofed sender failed: {result.stderr.strip()[-300:]}")
 
 
 def forge(packets):
