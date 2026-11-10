@@ -26,6 +26,8 @@ os.environ["ALLOWED_HOSTS"] = '["testserver", "localhost", "127.0.0.1"]'
 # Rate limits are tested on their own (test_security.py)
 os.environ["RATE_LIMIT_PER_MINUTE"] = "0"
 os.environ["LOGIN_ATTEMPTS_PER_MINUTE"] = "0"
+# KGUARD_TEST_REDIS_URL keeps detection state in Redis for the whole suite (S6.2)
+os.environ["REDIS_URL"] = os.environ.get("KGUARD_TEST_REDIS_URL", "")
 # No kernel module here; local-enforcer tests use a fake Netlink socket
 os.environ["LOCAL_ENFORCEMENT"] = "off"
 # Enrichment reads nothing from the developer's machine
@@ -184,6 +186,8 @@ def clean_state():
     traffic_baseline.reset()
     from app.services.response import response_engine
     response_engine.reset()
+    from app.services.notifier import notifier
+    notifier.reset()
     from app.services.local_enforcer import local_enforcer
     local_enforcer.managed.clear()
     data_collector.close_device()

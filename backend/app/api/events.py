@@ -38,6 +38,8 @@ async def get_events(
     direction: Optional[str] = Query(None, pattern="^(in|out|fwd)$", description="Filter by direction"),
     process_name: Optional[str] = Query(None, description="Filter by process name"),
     host_id: Optional[int] = Query(None, ge=0, description="Filter by agent (0: this server)"),
+    ids: Optional[str] = Query(None, max_length=1200, pattern=r"^\d+(,\d+){0,99}$",
+                               description="Only these event IDs (comma-separated, at most 100)"),
     start_time: Optional[datetime] = Query(None, description="Start time filter"),
     end_time: Optional[datetime] = Query(None, description="End time filter"),
     db: Session = Depends(get_db)
@@ -49,6 +51,8 @@ async def get_events(
         # Build query with filters
         query = db.query(NetworkEvent)
 
+        if ids:
+            query = query.filter(NetworkEvent.id.in_([int(i) for i in ids.split(",")]))
         if src_ip:
             query = query.filter(NetworkEvent.src_ip == src_ip)
         if dst_ip:

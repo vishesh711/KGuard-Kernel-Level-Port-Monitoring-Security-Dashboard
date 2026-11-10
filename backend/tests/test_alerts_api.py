@@ -92,3 +92,17 @@ def test_active_summary(client, db):
     summary = client.get("/api/alerts/active/summary").json()
     assert summary["total_active"] == 1
     assert summary["severity_breakdown"]["HIGH"] == 1
+
+
+def test_events_by_ids(client, fake_kernel, collect):
+    """The alert detail page fetches an alert's related events by ID (U7.4)"""
+    from .conftest import make_event
+
+    fake_kernel.write([make_event(dst_port=p) for p in (1, 2, 3)])
+    collect()
+    all_ids = [e["id"] for e in client.get("/api/events/").json()["items"]]
+    wanted = sorted(all_ids)[:2]
+    got = client.get("/api/events/", params={"ids": ",".join(map(str, wanted))}).json()["items"]
+    assert sorted(e["id"] for e in got) == wanted
+    assert client.get("/api/events/", params={"ids": "1;DROP"}).status_code == 422
+    assert client.get("/api/events/", params={"ids": ",".join(["1"] * 101)}).status_code == 422

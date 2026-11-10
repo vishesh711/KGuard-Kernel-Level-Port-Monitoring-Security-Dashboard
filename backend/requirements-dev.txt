@@ -8,3 +8,5 @@ httpx>=0.27
 ruff>=0.6
 # Builds small GeoIP databases for the enrichment tests
 mmdb-writer>=0.2
+# Local SMTP server for the notification tests
+aiosmtpd>=1.4

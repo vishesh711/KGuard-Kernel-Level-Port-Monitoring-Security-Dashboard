@@ -364,6 +364,75 @@ uvicorn's WebSocket lines).
   not have. The device is opened read-write only because the reader writes
   its read position into the shared ring header.
 
+## Notifications (Slack, email, Telegram)
+
+Alerts at or above `NOTIFY_MIN_SEVERITY` (`HIGH`) go to every configured
+channel, with the description, addresses, country, threat lists, MITRE
+technique and a link to the dashboard (`DASHBOARD_URL`):
+
+| Channel | Settings |
+|---|---|
+| Slack | `SLACK_WEBHOOK_URL` (an incoming webhook: Slack app, *Incoming Webhooks*) |
+| Telegram | `TELEGRAM_BOT_TOKEN` (from @BotFather), `TELEGRAM_CHAT_ID` |
+| Email | `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_STARTTLS` (true), `EMAIL_FROM`, `EMAIL_TO` (JSON list) |
+
+- Each channel sends at most `NOTIFY_MAX_PER_HOUR` (30) messages per hour;
+  past that, alerts are counted, and the next message says how many were held
+  back.
+- Sending runs in the background, so a slow service never delays detection.
+  Failures are retried three times (honouring `Retry-After`); a 4xx such as
+  a revoked webhook is not retried.
+- Webhook URLs, tokens and passwords never appear in logs or API answers.
+
+Check a channel straight away (admin):
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" localhost:8000/api/notifications/test
+# {"results": {"slack": "sent", "email": "sent"}}
+curl -H "Authorization: Bearer $TOKEN" localhost:8000/api/notifications/status
+```
+
+## Metrics (Prometheus and Grafana)
+
+`GET /metrics` serves Prometheus metrics. It needs its own bearer token,
+`METRICS_TOKEN` (not a user login); without one set it is off (404).
+
+| Metric | What |
+|---|---|
+| `kguard_events_total{host}` | events stored, from this server (`local`) or each agent |
+| `kguard_alerts_total{type,severity}` | alerts raised |
+| `kguard_detection_seconds` | time to analyse one batch (histogram) |
+| `kguard_kernel_events_dropped_total{host}` | events lost in kernel buffers |
+| `kguard_agent_queue_dropped_total{agent}` | events lost in an agent's queue |
+| `kguard_agent_online{agent}`, `kguard_agent_blocklist_in_sync{agent}` | agent health |
+| `kguard_blocks_active` | addresses blocked now |
+| `kguard_http_requests_total{method,status}`, `kguard_http_request_seconds` | API traffic and latency |
+| `kguard_collector_errors_total`, `kguard_detection_state{backend}` | backend health |
+
+The production Compose file runs Prometheus (scraping `/metrics` with the
+token, passed as a Compose secret) and Grafana with the **KGuard overview**
+dashboard already provisioned (`monitoring/`):
+
+```bash
+export METRICS_TOKEN=$(openssl rand -hex 32) GRAFANA_ADMIN_PASSWORD=...
+docker compose -f docker-compose.prod.yml up -d
+# Grafana: http://localhost:3001  (admin / GRAFANA_ADMIN_PASSWORD)
+```
+
+![KGuard overview dashboard](../docs/images/grafana-kguard.png)
+
+## Detection state (Redis)
+
+With `REDIS_URL` set, the detector's sliding windows (probes per source,
+connection attempts per source and login port) and alert cooldowns live in
+Redis: a backend restart keeps them, so a scan that started before the
+restart and continues after it is still detected, and several backend
+processes share them (a cooldown is claimed with an atomic `SET NX`, so only
+one process raises a given alert). The production Compose file sets it.
+The short-lived SYN-flood, spoofing and amplification trackers (seconds) stay
+in memory. If Redis is unreachable, detection carries on in memory and
+`/api/health/detailed` says `memory fallback`; Redis is retried every 30 s.
+
 ## Logging
 
 The backend is started with `python -m app` (the Docker images do this). Every

@@ -179,6 +179,33 @@ static void sleep_seconds(unsigned int seconds)
 	}
 }
 
+/* This host's listening ports and connections, for the dashboard's process view */
+static void report_sockets(CURL *curl, const char *server, struct curl_slist *auth)
+{
+	struct curl_slist *headers = NULL;
+	struct buf body, reply;
+	char url[1100];
+
+	for (struct curl_slist *h = auth; h; h = h->next)
+		headers = curl_slist_append(headers, h->data);
+	headers = curl_slist_append(headers, "Content-Type: application/json");
+	buf_init(&body);
+	buf_init(&reply);
+	sockets_json(&body);
+	snprintf(url, sizeof(url), "%s/api/agents/sockets", server);
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.data);
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)body.len);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &reply);
+	curl_easy_perform(curl);	/* best effort: the next round sends a fresh one */
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, NULL);
+	curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+	buf_free(&body);
+	buf_free(&reply);
+	curl_slist_free_all(headers);
+}
+
 void *blocksync_thread(void *arg)
 {
 	const struct blocksync_args *a = arg;
@@ -228,6 +255,7 @@ void *blocksync_thread(void *arg)
 			log_warn("kernel module is monitor-only (enforce=0): blocks are recorded, not enforced");
 		last_enforcing = enforcing;
 		buf_free(&body);
+		report_sockets(curl, a->cfg->server, headers);
 		sleep_seconds(a->cfg->sync_seconds);
 	}
 	curl_slist_free_all(headers);

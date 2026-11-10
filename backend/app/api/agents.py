@@ -19,23 +19,30 @@ Agents API: remote hosts running kguard-agent.
 import hashlib
 import hmac
 import secrets
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db
 from ..models.agent import Agent
+from ..models.network_event import NetworkEvent
 from ..services import auth
 from ..services.data_collector import data_collector
 from ..services.payloads import payload_service
 from ..services.response import response_engine
+from .sockets import SocketSnapshot, ensure_baseline
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
+
+# Window for the events-per-second figure
+RATE_WINDOW_SECONDS = 60
 
 # The agent sends at most 256 per batch
 MAX_INGEST_PAYLOADS = 2000
@@ -136,6 +143,19 @@ async def ingest(
             "payloads_accepted": samples.get("accepted", 0)}
 
 
+@router.post("/sockets")
+async def report_sockets(body: SocketSnapshot, agent: Agent = Depends(current_agent),
+                         db: Session = Depends(get_db)):
+    """The agent's latest listening sockets and connections (U7.2), every few seconds"""
+    agent.sockets = body.model_dump()
+    agent.sockets_at = datetime.utcnow()
+    agent.last_seen = datetime.utcnow()
+    db.commit()
+    # The agent's first report is its host's normal set of listeners
+    ensure_baseline(db, agent.id, agent.sockets)
+    return {"listeners": len(body.listeners), "connections": len(body.connections)}
+
+
 @router.get("/blocklist", response_class=PlainTextResponse)
 async def blocklist(
     request: Request,
@@ -164,4 +184,11 @@ async def blocklist(
 @router.get("/", dependencies=[Depends(auth.current_user)])
 async def list_agents(db: Session = Depends(get_db)):
     agents = db.query(Agent).order_by(Agent.name).all()
-    return [a.to_dict() for a in agents]
+    # Events per second over the last minute, from the stored events (so it
+    # is right after a restart and with several backend processes)
+    since = time.time_ns() - RATE_WINDOW_SECONDS * 1_000_000_000
+    counts = dict(db.query(NetworkEvent.host_id, func.count(NetworkEvent.id))
+                  .filter(NetworkEvent.timestamp >= since, NetworkEvent.host_id.isnot(None))
+                  .group_by(NetworkEvent.host_id).all())
+    return [{**a.to_dict(), "events_per_second": round(counts.get(a.id, 0) / RATE_WINDOW_SECONDS, 2)}
+            for a in agents]

@@ -7,7 +7,7 @@ only a SHA-256 hash of the token is stored.
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, Integer, String
+from sqlalchemy import JSON, BigInteger, Boolean, Column, DateTime, Integer, String
 from sqlalchemy.sql import func
 
 from ..database import Base
@@ -41,6 +41,9 @@ class Agent(Base):
     blocklist_failed = Column(Integer, nullable=True)
     blocklist_enforcing = Column(Boolean, nullable=True)
     blocklist_synced_at = Column(DateTime(timezone=True), nullable=True)
+    # Latest listening sockets and connections the agent reported (U7.2)
+    sockets = Column(JSON, nullable=True)
+    sockets_at = Column(DateTime(timezone=True), nullable=True)
 
     def is_online(self, now: datetime = None) -> bool:
         if not self.last_seen:

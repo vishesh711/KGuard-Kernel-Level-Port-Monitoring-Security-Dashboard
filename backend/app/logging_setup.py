@@ -254,6 +254,9 @@ class RequestContextMiddleware:
             duration_ms = round((time.perf_counter() - start) * 1000, 2)
             if scope["type"] == "http":
                 code = status["code"] or 500
+                from . import metrics
+
+                metrics.observe_request(fields["method"], code, duration_ms / 1000)
                 access_logger.info(f"{fields['method']} {fields['path']} {code}",
                                    extra={**fields, "status": code, "duration_ms": duration_ms})
             else:

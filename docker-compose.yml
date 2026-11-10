@@ -15,6 +15,7 @@ services:
       - DEBUG=true
       - DATABASE_URL=sqlite:///./data/kguard.db
       - LOG_LEVEL=DEBUG
+      - REDIS_URL=redis://redis:6379/0
       # Required; e.g. export SECRET_KEY=$(openssl rand -hex 32)
       - SECRET_KEY=${SECRET_KEY:?set SECRET_KEY (openssl rand -hex 32)}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}

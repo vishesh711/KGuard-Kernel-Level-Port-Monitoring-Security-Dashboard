@@ -48,6 +48,14 @@ export interface AgentInfo {
   events_received: number
   kernel_dropped: number
   queue_dropped: number
+  /** Over the last minute */
+  events_per_second?: number
+  blocklist?: {
+    applied: string | null
+    failed: number | null
+    enforcing: boolean | null
+    synced_at: string | null
+  }
 }
 
 export interface SecurityAlert {
@@ -195,6 +203,7 @@ export interface FilterOptions {
   is_suspicious?: boolean
   direction?: 'in' | 'out' | 'fwd'
   process_name?: string
+  host_id?: number
   start_time?: Date
   end_time?: Date
 }
@@ -252,4 +261,94 @@ export interface DnsQuery {
   subdomain_length: number | null
   entropy: number | null
   process_name: string | null
+}
+
+/** Response engine (S6.4) */
+export interface Block {
+  id: number
+  cidr: string
+  host_id: number | null
+  reason: string
+  source: 'manual' | 'auto'
+  created_by: string
+  alert_id: number | null
+  created_at: string | null
+  expires_at: string | null
+  removed_at: string | null
+  removed_by: string | null
+  active: boolean
+  seconds_left: number | null
+}
+
+export interface AllowEntry {
+  id: number
+  cidr: string
+  note: string | null
+  created_by: string
+  created_at: string | null
+}
+
+export interface AuditEntry {
+  id: number
+  time: string | null
+  actor: string
+  action: string
+  target: string | null
+  details: Record<string, unknown> | null
+}
+
+export interface ResponseStatus {
+  rules: {
+    auto_block: boolean
+    types: string[]
+    min_severity: string
+    listed_sources: boolean
+    minutes: number
+    lease_seconds: number
+  }
+  active_blocks: number
+  local: { status: string; managed: number; last_error: string | null }
+  agents: {
+    id: number
+    name: string
+    engine: string | null
+    in_sync: boolean
+    failed: number | null
+    enforcing: boolean | null
+    synced_at: string | null
+  }[]
+}
+
+/** A socket from /proc/net, with its process (U7.2) */
+export interface SocketInfo {
+  proto: 'TCP' | 'UDP'
+  family: number
+  local: string
+  lport: number
+  remote: string
+  rport: number
+  state: string
+  uid: number
+  user: string | null
+  pid: number | null
+  process: string | null
+  /** Listeners only: not in the host's baseline or marked known */
+  new?: boolean
+}
+
+export interface SocketSnapshot {
+  host: string
+  taken_at: string | null
+  listeners: SocketInfo[]
+  connections: SocketInfo[]
+}
+
+/** The kernel module's counters, as in /sys/kernel/debug/kguard/stats (U7.7) */
+export interface KernelCounters {
+  available: boolean
+  reason?: string
+  stats?: Record<string, number>
+  ring_capacity?: number | null
+  enforcing?: boolean | null
+  reader?: string | null
 }

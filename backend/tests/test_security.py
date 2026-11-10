@@ -33,6 +33,8 @@ PUBLIC = {
     ("POST", "/api/agents/enroll"),  # enrollment key instead
     ("POST", "/api/agents/ingest"),  # agent token instead
     ("GET", "/api/agents/blocklist"),  # agent token instead
+    ("POST", "/api/agents/sockets"),   # agent token instead
+    ("GET", "/metrics"),             # METRICS_TOKEN instead (Prometheus)
 }
 # Changes a logged-in viewer may make (to their own account)
 VIEWER_WRITES = {("POST", "/api/auth/password")}

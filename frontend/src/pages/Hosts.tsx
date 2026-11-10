@@ -2,6 +2,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { useAgents } from '../hooks/queries'
 import { parseServerDate } from '../lib/time'
 import { AgentInfo } from '../types'
+import { KernelHealth } from '../components/KernelHealth'
 
 const ENGINE_LABELS: Record<string, string> = {
   module: 'Kernel module',
@@ -19,6 +20,14 @@ function StatusPill({ online }: { online: boolean }) {
       {online ? 'Online' : 'Offline'}
     </span>
   )
+}
+
+function BlocklistState({ agent }: { agent: AgentInfo }) {
+  const b = agent.blocklist
+  if (!b?.synced_at) return <span className="text-gray-400">never synced</span>
+  if (b.enforcing === false) return <span className="text-yellow-700">monitor only</span>
+  if (b.failed) return <span className="text-red-700">{b.failed} not applied</span>
+  return <span className="text-green-700">enforcing</span>
 }
 
 function HostRow({ agent }: { agent: AgentInfo }) {
@@ -42,6 +51,9 @@ function HostRow({ agent }: { agent: AgentInfo }) {
           : 'Never'}
       </td>
       <td className="px-4 py-3 text-right text-sm tabular-nums text-gray-900">
+        {(agent.events_per_second ?? 0).toLocaleString(undefined, { maximumFractionDigits: 1 })}
+      </td>
+      <td className="px-4 py-3 text-right text-sm tabular-nums text-gray-900">
         {agent.events_received.toLocaleString()}
       </td>
       <td
@@ -49,6 +61,9 @@ function HostRow({ agent }: { agent: AgentInfo }) {
         title={`Kernel: ${agent.kernel_dropped}, agent queue: ${agent.queue_dropped}`}
       >
         {lost.toLocaleString()}
+      </td>
+      <td className="px-4 py-3 text-sm">
+        <BlocklistState agent={agent} />
       </td>
     </tr>
   )
@@ -63,6 +78,8 @@ export function Hosts() {
         <h1 className="text-2xl font-bold text-gray-900">Hosts</h1>
         <p className="mt-1 text-sm text-gray-600">Servers sending events through kguard-agent</p>
       </div>
+
+      <KernelHealth />
 
       <div className="card overflow-x-auto">
         {agents.isError ? (
@@ -87,8 +104,10 @@ export function Hosts() {
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Engine</th>
                 <th className="px-4 py-3">Last seen</th>
+                <th className="px-4 py-3 text-right">Events/s</th>
                 <th className="px-4 py-3 text-right">Events</th>
                 <th className="px-4 py-3 text-right">Lost</th>
+                <th className="px-4 py-3">Blocklist</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 bg-white">

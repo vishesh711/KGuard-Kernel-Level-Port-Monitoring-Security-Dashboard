@@ -110,3 +110,19 @@ def test_remote_hosts_keep_backend_detection_when_local_kernel_detects(client, e
     agent = enroll(client, "web-1").json()
     send(client, agent["token"], scan(range(1000, 1015)))
     assert [a.host_id for a in db.query(SecurityAlert).all()] == [agent["agent_id"]]
+
+
+def test_agents_report_events_per_second(client, enrollment):
+    """U7.5: each agent's rate over the last minute, separately"""
+    import time
+
+    tokens = {name: enroll(client, name).json()["token"] for name in ("web-1", "db-1")}
+    now = time.time_ns()
+    def events(n, start):
+        return [{"timestamp": start + i, "src_ip": "10.0.0.5", "dst_ip": "10.0.0.1", "src_port": 40000 + i,
+                 "dst_port": 443, "protocol": "TCP", "flags": 16} for i in range(n)]
+    send(client, tokens["web-1"], events(120, now))
+    send(client, tokens["db-1"], events(30, now))
+    send(client, tokens["db-1"], events(500, now - 120 * 1_000_000_000))  # two minutes ago: not counted
+    rates = {a["name"]: a["events_per_second"] for a in client.get("/api/agents/").json()}
+    assert rates == {"web-1": 2.0, "db-1": 0.5}

@@ -111,60 +111,32 @@ The project uses Tailwind CSS for styling. Configuration is in `tailwind.config.
 
 ## Features
 
-### Dashboard Pages
+### Pages
 
-1. **Overview Dashboard**
-   - Real-time metrics
-   - Recent alerts
-   - Traffic summary charts
+All pages need a login (see the backend's *Login and security*). Viewers
+see everything but no controls that change things; admins also get
+acknowledge, resolve, block, unblock, allowlist and "mark expected".
 
-2. **Live Events**
-   - Real-time event table
-   - Filtering and search
-   - Event details modal
+| Page | What it shows |
+|---|---|
+| Dashboard | Totals, traffic chart, protocol mix, recent events and alerts (with country, threat lists and MITRE tags) |
+| Live Events | Every event, filterable by address, port, protocol, direction, process, host and suspicious flag, paginated; new events appear at once |
+| Security Alerts | Open / acknowledged / resolved alerts by severity and type |
+| Alert detail (`/alerts/:id`) | Summary with country, threat lists and MITRE technique; a panel for the alert type (scan type and ports, OS / tool fingerprint, SYN cookies, spoofing reason, amplification factor, DNS tunnel domain, TLS JA3/JA4, ...); related events; pcap download |
+| Analytics | Alerts and events over time, top sources, ports, alert types, for 1 h / 24 h / 7 days |
+| Hosts | One row per agent: status, engine, version, events per second, drops, blocklist state; the kernel module's own counters on this server (buffer fill, drops, ns per packet, guard counters) |
+| Processes | Listening ports and connections with process, PID and user, for this server or any agent; listeners that appeared after the host's first snapshot are highlighted until marked expected |
+| Blocked | Active blocks and history (reason, manual or automatic with its alert, host, time left), block / unblock, allowlist, audit log, each agent's enforcement state |
+| Settings | The configuration in force: detection thresholds, automatic blocking, notification channels, enrichment and retention |
 
-3. **Analytics**
-   - Traffic patterns over time
-   - Protocol distribution
-   - Top source/destination IPs
+### Live updates
 
-4. **Alerts**
-   - Security alert management
-   - Alert acknowledgment
-   - Severity filtering
-
-### Real-time Updates
-
-The dashboard connects to the backend WebSocket for real-time updates:
-
-- Live event streaming
-- Alert notifications
-- Metric updates
-- Connection status monitoring
-
-## API Integration
-
-### REST API
-
-The frontend communicates with the backend REST API:
-
-```typescript
-// Example API calls
-const events = await api.getEvents({ page: 1, limit: 50 });
-const stats = await api.getStats();
-const alerts = await api.getAlerts();
-```
-
-### WebSocket
-
-Real-time data is received via WebSocket:
-
-```typescript
-// WebSocket connection
-const socket = io(WS_URL);
-socket.on('network_event', handleNewEvent);
-socket.on('security_alert', handleNewAlert);
-```
+One WebSocket (`/ws?token=...`) for the whole app. A new event is put
+straight into the lists of newest events (the Events page's first page
+without filters, and the dashboard), with no request; filtered lists and
+statistics refresh at most every 2 seconds. New alerts refresh alert data
+immediately. Measured in Chromium against a real backend: 26-72 ms from an
+agent sending an event to the row on screen.
 
 ## Testing
 

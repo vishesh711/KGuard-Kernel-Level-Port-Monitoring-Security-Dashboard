@@ -10,19 +10,23 @@ import logging
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
+from . import metrics
 from .api import (
     agents_router,
     alerts_router,
     auth_router,
     events_router,
     health_router,
+    notifications_router,
     payloads_router,
     response_router,
+    sockets_router,
 )
+from .api.sockets import baseline_this_server
 from .config import settings
 from .database import check_db_connection, engine, init_db
 from .logging_setup import RequestContextMiddleware, configure_logging
@@ -34,6 +38,7 @@ from .services.data_collector import data_collector
 from .services.enrichment import enricher  # noqa: F401  (registers the alert enrichment hook)
 from .services.kernel_alerts import kernel_alerts
 from .services.local_enforcer import local_enforcer
+from .services.notifier import notifier
 from .services.packet_capture import packet_capture
 from .services.response import response_engine
 from .services.retention import retention_job
@@ -59,6 +64,9 @@ def update_threat_lists() -> None:
 
     update()
 
+
+# Seconds after start-up before this server's listeners are recorded as normal
+BASELINE_DELAY_SECONDS = 5
 
 # Seconds between renewing this machine's block leases (well inside BLOCK_LEASE_SECONDS)
 ENFORCE_INTERVAL = 5
@@ -108,6 +116,19 @@ async def periodic_tasks():
             await asyncio.sleep(60)
 
 
+async def baseline_listeners():
+    """
+    This server's listening sockets become its normal set (first start only).
+    Waits until uvicorn has opened its own port, which happens after start-up,
+    so the backend's port is part of the baseline rather than flagged as new.
+    """
+    await asyncio.sleep(BASELINE_DELAY_SECONDS)
+    try:
+        await asyncio.get_running_loop().run_in_executor(None, baseline_this_server)
+    except Exception as e:
+        logger.error(f"Listener baseline failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start background work on startup and stop it cleanly on shutdown"""
@@ -126,9 +147,11 @@ async def lifespan(app: FastAPI):
     ensure_bootstrap_admin()
 
     packet_capture.start()
+    notifier.start()
     background = [
         asyncio.create_task(data_collector.start_collection(), name="data_collector"),
         asyncio.create_task(periodic_tasks(), name="periodic_tasks"),
+        asyncio.create_task(baseline_listeners(), name="baseline_listeners"),
     ]
     logger.info("KGuard Backend Service started successfully")
 
@@ -139,6 +162,7 @@ async def lifespan(app: FastAPI):
         data_collector.stop_collection()
         kernel_alerts.close()
         local_enforcer.close()
+        await notifier.stop()
         packet_capture.stop()
         for task in background:
             task.cancel()
@@ -192,6 +216,8 @@ app.include_router(health_router)
 app.include_router(agents_router)
 app.include_router(payloads_router, dependencies=logged_in)
 app.include_router(response_router, dependencies=logged_in)
+app.include_router(notifications_router, dependencies=logged_in)
+app.include_router(sockets_router, dependencies=logged_in)
 
 
 @app.get("/")
@@ -204,6 +230,18 @@ async def root():
         "docs": "/docs" if settings.debug else "disabled",
         "health": "/api/health"
     }
+
+
+@app.get("/metrics", tags=["metrics"], response_class=Response)
+async def prometheus_metrics(authorization: str = Header("", include_in_schema=False)):
+    """Prometheus metrics; needs METRICS_TOKEN as a bearer token (not a user login)"""
+    if not settings.metrics_token:
+        raise HTTPException(status_code=404, detail="Metrics are off: set METRICS_TOKEN")
+    if not metrics.token_ok(authorization, settings.metrics_token):
+        raise HTTPException(status_code=401, detail="Wrong metrics token",
+                            headers={"WWW-Authenticate": "Bearer"})
+    body, content_type = metrics.render()
+    return Response(body, media_type=content_type)
 
 
 @app.websocket("/ws")

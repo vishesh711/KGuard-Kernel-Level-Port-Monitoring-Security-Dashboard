@@ -56,7 +56,8 @@ BASELINE_TABLES = ("agents", "dns_queries", "network_events", "security_alerts",
 # brought to the baseline without them, so the migrations can add them.
 # Every migration that adds a column to a baseline table must list it here.
 LATER_COLUMNS = {
-    "agents": ("blocklist_applied", "blocklist_failed", "blocklist_enforcing", "blocklist_synced_at"),
+    "agents": ("blocklist_applied", "blocklist_failed", "blocklist_enforcing", "blocklist_synced_at",
+               "sockets", "sockets_at"),
 }
 ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
 _migrated = False

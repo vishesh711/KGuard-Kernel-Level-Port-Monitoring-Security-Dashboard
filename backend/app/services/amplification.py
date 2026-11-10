@@ -143,9 +143,8 @@ class AmplificationDetector:
             return None
         host_id, victim, port = key
         cooldown = f"amplification_{host_id}|{victim}|{port}"
-        if self.detector._is_in_cooldown(cooldown):
+        if not self.detector._claim_cooldown(cooldown):
             return None
-        self.detector._start_cooldown(cooldown)
         self.detector.stats["amplification_detected"] += 1
 
         service = REFLECTOR_SERVICES[port][0]
@@ -190,9 +189,8 @@ class AmplificationDetector:
             return None
         host_id, client, port = key
         cooldown = f"reflector_{host_id}|{client}|{port}"
-        if self.detector._is_in_cooldown(cooldown):
+        if not self.detector._claim_cooldown(cooldown):
             return None
-        self.detector._start_cooldown(cooldown)
         self.detector.stats["amplification_detected"] += 1
 
         service = REFLECTOR_SERVICES[port][0]
