@@ -262,16 +262,22 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
   *Done when:* zero reports from each tool, recorded in CI logs.
 - [ ] **P8.4 Kernel static checks.** `sparse` (`make C=1`), `checkpatch.pl --strict`, and `smatch` in CI.
   *Done when:* clean output.
+  *Status:* Partly done. sparse (`make -C kernel sparse`, `C=2`, any warning in our files fails, and a failed build fails) and checkpatch `--strict` run in CI and are clean (CI run 56, "Kernel module" job). smatch is not done: it has to be built from its git source, and fetching and building that code was not permitted in this environment. It needs either a packaged smatch or permission to build it.
 - [ ] **P8.5 Multi-kernel CI.** Build and load-test the module on several kernel versions (e.g. 5.15, 6.1, 6.6, latest) inside VMs.
   *Done when:* a CI matrix is green for every version.
-- [ ] **P8.6 Kernel self-tests.** kselftest-style tests for the device, Netlink commands and blocking.
+  *Status:* Not done. `kernel/tests/kernel_matrix.sh` fetches the Ubuntu mainline builds of 5.15, 6.1, 6.6, 6.12 and the latest stable from kernel.ubuntu.com, builds the module against each with warnings as errors, and runs the full suite in a VM on each. It has not been run: downloading and booting those kernels was not permitted in this environment, and there is no CI matrix yet. Only 6.8 (Ubuntu 24.04) and the CI runner's kernel are tested.
+- [x] **P8.6 Kernel self-tests.** kselftest-style tests for the device, Netlink commands and blocking.
   *Done when:* tests run in CI inside a VM.
+  *Status:* Done. `kernel/tests/selftests/kguard_test.c` (TAP, `make -C kernel selftest`): 35 tests of the device (ABI, mmap rules, poll, events), Generic Netlink (stats, config, permissions, block/allow add, list, delete, errors) and blocking (a client in a namespace cut off and let back in, enforce vs monitor-only, expiry). The CI job "Kernel module in a VM" boots the runner's kernel with KVM and runs them: 35/35 (CI run 56), followed by the full suite, 84/84. Getting the suite green on CI needed nmap and scapy installed, a readable checkout for the non-root check, retries for raw sends that fill the veth queue on fast KVM, and ignoring the runner CPU's boot-time SRSO warning.
 - [ ] **P8.7 Benchmarks.** Use `pktgen` (and `trafgen` or TRex) to measure packets/s, nanoseconds per packet and CPU use for: no monitoring, C module, eBPF TC and eBPF XDP. Include `perf` flame graphs.
   *Done when:* `docs/BENCHMARKS.md` has the numbers, charts and hardware details.
+  *Status:* Harness done; numbers only from an emulated VM. `make bench` (`scripts/benchmark.py`, `bench_vm.sh`, `bench_report.py`) measures all six modes (no monitoring, module, XDP generic, XDP native, and egress no monitoring vs TC egress) with trafgen (pktgen optional), 3 repeats, flame graphs, and writes `docs/BENCHMARKS.md` material: the table, two charts, six flame graphs and the hardware details. But this environment has no KVM, so every figure is from QEMU software emulation and far from hardware cost; the document says so up front. Not met in spirit until it is run on hardware or KVM. Findings: no event losses in any mode; a 6.8 kernel BUG with pktgen + generic XDP (so trafgen is the default); an unexplained 50x per-run gap between the XDP and TC programs; an occasional veth reference left at teardown.
 - [ ] **P8.8 Fuzzing.** Fuzz the packet parser in user space (libFuzzer on shared parsing code) and the Netlink/ioctl interface (syzkaller description, optional).
   *Done when:* 24 hours of fuzzing with no crashes.
-- [ ] **P8.9 Backend coverage.** At least 80% test coverage on backend services.
+  *Status:* Harnesses done; 1.9 hours run, not 24. The module's TCP options walk moved to `kernel/src/kguard_parse.h`, shared by the module and a libFuzzer harness with ASan and UBSan (`make -C kernel fuzz`); it caught a planted off-by-one as a heap overflow. Atheris harnesses fuzz the backend's TLS ClientHello and DNS parsers (`backend/fuzz`), whose contract is "return a result or raise the parser's own error". One run of 6,900 s each, no crashes: TCP options 2.48 billion inputs, TLS 47.4 million, DNS 162 million. `.github/workflows/fuzz.yml` runs all three for an hour a night from the cached corpus, so the hours add up; it has not run yet. No syzkaller description.
+- [x] **P8.9 Backend coverage.** At least 80% test coverage on backend services.
   *Done when:* the CI coverage report shows at least 80%.
+  *Status:* Done. CI measures coverage on every Python version and fails under 80% (`backend/pyproject.toml`); CI run 56 reports 89.23% (358 passed, 8 skipped) and uploads `coverage.xml`. The lowest services are `kguard_netlink.py` (66%) and `detection_state.py` (70%), whose untested branches need a live kernel or Redis failure.
 
 ## Phase 9 — Documentation and release
 

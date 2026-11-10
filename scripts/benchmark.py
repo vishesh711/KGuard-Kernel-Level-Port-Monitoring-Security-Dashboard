@@ -389,8 +389,10 @@ def run_mode(mode, seconds, flame, out_dir, generator="trafgen"):
 def machine():
     cpu = next((line.split(":", 1)[1].strip() for line in open("/proc/cpuinfo") if line.startswith("model name")), "?")
     virt = sh("systemd-detect-virt", check=False).strip() or "unknown"
+    # The "hypervisor" CPU flag is set under emulation too; QEMU names its TCG CPU model
+    accel = "tcg (emulated, no KVM)" if "TCG" in cpu else ("none" if virt == "none" else "hardware-assisted")
     return {"kernel": os.uname().release, "cpu": cpu, "cpus": os.cpu_count(), "virtualization": virt,
-            "kvm": "hypervisor" in open("/proc/cpuinfo").read()}
+            "accelerator": accel}
 
 
 def main():
