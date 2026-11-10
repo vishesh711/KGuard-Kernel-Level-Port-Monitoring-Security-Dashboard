@@ -71,7 +71,7 @@ def api(path, token=None, data=None):
     if token:
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(API + path, data=json.dumps(data).encode() if data else None, headers=headers)
-    with urllib.request.urlopen(req, timeout=10) as r:
+    with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read())
 
 
@@ -88,17 +88,24 @@ def check():
     print(f"attacker: victim API up at {API}", flush=True)
     health = api("/api/health/kernel", token)
     print("attacker: victim kernel module:", "loaded" if health.get("details", {}).get("kernel_detection") else health)
-    subprocess.run(["nmap", "-sS", "-Pn", "-n", "-T4", "-p", "1-1000", VICTIM], check=True,
+    # Under the kernel's SYN-rate limit (200/s), so the alert is the scan itself
+    subprocess.run(["nmap", "-sS", "-Pn", "-n", "--max-rate", "150", "-p", "1-1000", VICTIM], check=True,
                    stdout=subprocess.DEVNULL)
-    deadline = time.time() + 60
+    print("attacker: nmap -sS done", flush=True)
+    deadline = time.time() + 180
     while time.time() < deadline:
-        found = [a for a in api("/api/alerts/?size=100", token)["items"]
-                 if a.get("src_ip") == ATTACKER and a["alert_type"] == "PORT_SCAN"]
+        try:
+            items = api("/api/alerts/?size=100", token)["items"]
+        except OSError as e:  # a slow (emulated) victim: try again
+            print(f"attacker: API: {e}", flush=True)
+            continue
+        found = [a for a in items if a.get("src_ip") == ATTACKER and a["alert_type"] == "PORT_SCAN"]
         if found:
-            print(f"PASS  scan from the attacker VM raised '{found[0]['title']}' on the victim")
+            print(f"PASS  scan from the attacker VM raised '{found[0]['title']}' on the victim "
+                  f"({found[0]['description'][:120]})")
             return
         time.sleep(2)
-    raise SystemExit("FAIL  no PORT_SCAN alert from the attacker VM within 60 s")
+    raise SystemExit("FAIL  no PORT_SCAN alert from the attacker VM within 180 s")
 
 
 if __name__ == "__main__":

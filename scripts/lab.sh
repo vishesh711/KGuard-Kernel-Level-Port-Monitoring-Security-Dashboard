@@ -35,16 +35,23 @@ nic() { echo "-netdev socket,id=lab,$1 -device virtio-net-pci,netdev=lab,mac=$2"
 
 rm -f "$OUT/lab-victim.log"
 echo "== starting the victim VM (log: $OUT/lab-victim.log)"
-vng "${base[@]}" --qemu-opts "$(nic "listen=127.0.0.1:$PORT" 52:54:00:77:00:01)" --exec \
+vng "${base[@]}" --qemu-opts="$(nic "listen=127.0.0.1:$PORT" 52:54:00:77:00:01)" --exec \
     "cd '$ROOT' && python3 scripts/lab_node.py victim '$BACKEND_PY'" > "$OUT/lab-victim.log" 2>&1 &
 victim=$!
-trap 'kill $victim 2>/dev/null; pkill -f "listen=127.0.0.1:$PORT" 2>/dev/null; wait $victim 2>/dev/null' EXIT
+stop_victim() {
+    local rc=$?
+    kill $victim 2>/dev/null || true
+    pkill -f "listen=127.0.0.1:$PORT" 2>/dev/null || true
+    wait $victim 2>/dev/null || true
+    exit $rc
+}
+trap stop_victim EXIT
 for _ in $(seq 60); do
     ss -ltn | grep -q "127.0.0.1:$PORT " && break
     sleep 1
 done
 
-attacker=(vng "${base[@]}" --qemu-opts "$(nic "connect=127.0.0.1:$PORT" 52:54:00:77:00:02)")
+attacker=(vng "${base[@]}" --qemu-opts="$(nic "connect=127.0.0.1:$PORT" 52:54:00:77:00:02)")
 if [[ -n "${LAB_CHECK:-}" ]]; then
     echo "== attacker VM: scanning the victim"
     "${attacker[@]}" --exec "cd '$ROOT' && python3 scripts/lab_node.py check" 2>&1 | tee "$OUT/lab-attacker.log"
