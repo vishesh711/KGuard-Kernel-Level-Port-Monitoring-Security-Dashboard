@@ -19,7 +19,9 @@ import {
 } from '../types'
 import { Role, endSession, getToken } from '../lib/session'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+// Same origin by default: nginx (production) and the Vite dev server proxy
+// /api to the backend. Set VITE_API_BASE_URL to call a backend elsewhere.
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
 // Create axios instance
 export const apiClient = axios.create({

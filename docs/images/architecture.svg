@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="520" viewBox="0 0 980 520" font-family="Helvetica, Arial, sans-serif" font-size="13">
+  <title>KGuard architecture</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <style>
+      .zone { fill: #f8fafc; stroke: #94a3b8; stroke-width: 1.2; stroke-dasharray: 5 4; }
+      .kernel { fill: #fef3c7; stroke: #d97706; stroke-width: 1.4; }
+      .user { fill: #dbeafe; stroke: #2563eb; stroke-width: 1.4; }
+      .store { fill: #dcfce7; stroke: #16a34a; stroke-width: 1.4; }
+      .ext { fill: #f1f5f9; stroke: #64748b; stroke-width: 1.2; }
+      .title { font-weight: bold; font-size: 14px; fill: #0f172a; }
+      .label { fill: #0f172a; }
+      .small { font-size: 11.5px; fill: #334155; }
+      .zonelabel { font-size: 12px; fill: #475569; font-weight: bold; letter-spacing: 0.5px; }
+      .line { stroke: #475569; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="980" height="520" fill="#ffffff"/>
+
+  <!-- Monitored host -->
+  <rect class="zone" x="15" y="15" width="430" height="490" rx="10"/>
+  <text class="zonelabel" x="30" y="38">MONITORED HOST</text>
+
+  <rect class="kernel" x="35" y="55" width="390" height="215" rx="8"/>
+  <text class="title" x="50" y="78">Kernel module kguard.ko (Netfilter)</text>
+  <rect class="ext" x="55" y="92" width="350" height="40" rx="5"/>
+  <text class="label" x="68" y="110">Guard hook (PRE_ROUTING, first)</text>
+  <text class="small" x="68" y="125">spoofed sources · block lists · scans · SYN rate limit</text>
+  <rect class="ext" x="55" y="142" width="350" height="40" rx="5"/>
+  <text class="label" x="68" y="160">Capture hooks (LOCAL_IN, LOCAL_OUT, FORWARD)</text>
+  <text class="small" x="68" y="175">after conntrack · headers · TCP options · socket owner</text>
+  <rect class="ext" x="55" y="192" width="168" height="62" rx="5"/>
+  <text class="label" x="68" y="212">Per-CPU rings</text>
+  <text class="small" x="68" y="228">lock-free, 128-byte</text>
+  <text class="small" x="68" y="243">events → /dev/kguard</text>
+  <rect class="ext" x="237" y="192" width="168" height="62" rx="5"/>
+  <text class="label" x="250" y="212">Generic Netlink</text>
+  <text class="small" x="250" y="228">alerts · stats · config</text>
+  <text class="small" x="250" y="243">block / allow lists</text>
+
+  <rect class="kernel" x="35" y="285" width="390" height="95" rx="8"/>
+  <text class="title" x="50" y="308">or eBPF (no module)</text>
+  <text class="small" x="50" y="328">XDP ingress: parse, drop blocked sources (LPM trie)</text>
+  <text class="small" x="50" y="345">TC egress · connect/accept/bind tracking · DNS and TLS samples</text>
+  <text class="small" x="50" y="362">same 128-byte event in a BPF ring buffer</text>
+
+  <rect class="user" x="35" y="400" width="390" height="88" rx="8"/>
+  <text class="title" x="50" y="423">kguard-agent (C, libbpf)</text>
+  <text class="small" x="50" y="443">reads either engine · bounded queue · batches</text>
+  <text class="small" x="50" y="460">HTTPS + JSON to the server · applies its block list</text>
+  <text class="small" x="50" y="477">(one host: the backend reads /dev/kguard itself)</text>
+
+  <!-- Server -->
+  <rect class="zone" x="535" y="15" width="430" height="490" rx="10"/>
+  <text class="zonelabel" x="550" y="38">SERVER (docker compose)</text>
+
+  <rect class="user" x="555" y="55" width="390" height="185" rx="8"/>
+  <text class="title" x="570" y="78">Backend (FastAPI)</text>
+  <text class="small" x="570" y="100">collector: device / proc / agent ingest, batch inserts</text>
+  <text class="small" x="570" y="118">detectors: scan types, brute force, SYN flood, spoofing,</text>
+  <text class="small" x="570" y="134">amplification, DNS tunnels, TLS JA3/JA4, OS fingerprints, baseline</text>
+  <text class="small" x="570" y="152">kernel alert listener · enrichment (MITRE, GeoIP, threat lists)</text>
+  <text class="small" x="570" y="170">response engine: blocks as leases · audit log</text>
+  <text class="small" x="570" y="188">IPFIX export · pcap on alert · notifications</text>
+  <text class="small" x="570" y="206">REST API + WebSocket · logins and roles</text>
+  <text class="small" x="570" y="224">/metrics</text>
+
+  <rect class="store" x="555" y="258" width="185" height="56" rx="8"/>
+  <text class="title" x="570" y="281">PostgreSQL</text>
+  <text class="small" x="570" y="300">events · alerts · blocks</text>
+  <rect class="store" x="760" y="258" width="185" height="56" rx="8"/>
+  <text class="title" x="775" y="281">Redis</text>
+  <text class="small" x="775" y="300">detection windows</text>
+
+  <rect class="user" x="555" y="334" width="390" height="70" rx="8"/>
+  <text class="title" x="570" y="357">Dashboard (React, nginx)</text>
+  <text class="small" x="570" y="377">live alerts and events · hosts · blocks · processes</text>
+  <text class="small" x="570" y="393">updates pushed over the WebSocket</text>
+
+  <rect class="ext" x="555" y="422" width="185" height="66" rx="8"/>
+  <text class="title" x="570" y="445">Prometheus</text>
+  <text class="small" x="570" y="463">→ Grafana</text>
+  <rect class="ext" x="760" y="422" width="185" height="66" rx="8"/>
+  <text class="title" x="775" y="445">Notifications</text>
+  <text class="small" x="775" y="463">Slack · Telegram · e-mail</text>
+
+  <!-- Arrows -->
+  <path class="line" d="M 425 223 C 480 223, 490 110, 553 110"/>
+  <text class="small" x="447" y="200">events, alerts</text>
+  <path class="line" d="M 425 444 C 480 444, 490 150, 553 150"/>
+  <text class="small" x="452" y="430">HTTPS</text>
+  <path class="line" d="M 230 380 L 230 398"/>
+  <path class="line" d="M 647 240 L 647 256"/>
+  <path class="line" d="M 852 240 L 852 256"/>
+  <path class="line" d="M 750 240 C 750 300, 750 300, 750 332"/>
+  <path class="line" d="M 600 420 L 600 242" style="stroke-dasharray:3 3"/>
+  <path class="line" d="M 900 240 C 960 280, 960 400, 900 420"/>
+</svg>

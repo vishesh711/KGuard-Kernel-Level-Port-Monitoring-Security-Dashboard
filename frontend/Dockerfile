@@ -1,5 +1,5 @@
 # KGuard Frontend Dockerfile
-FROM node:18-alpine as base
+FROM node:20-alpine AS base
 
 # Set working directory
 WORKDIR /app
@@ -8,7 +8,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Development stage
-FROM base as development
+FROM base AS development
 
 # Install all dependencies (including dev dependencies)
 RUN npm install
@@ -23,19 +23,20 @@ EXPOSE 3000
 CMD ["npm", "run", "dev", "--", "--host"]
 
 # Build stage
-FROM base as build
+FROM base AS build
 
-# Install dependencies
-RUN npm install --only=production && npm cache clean --force
+# All dependencies: the build needs the dev tools (TypeScript, Vite)
+RUN npm ci
 
 # Copy source code
 COPY . .
 
-# Build the application
+# Build the application. With no VITE_API_BASE_URL the dashboard calls /api and
+# /ws on its own host, which nginx (nginx.conf) passes to the backend.
 RUN npm run build
 
 # Production stage
-FROM nginx:alpine as production
+FROM nginx:1.27-alpine AS production
 
 # Copy custom nginx config
 COPY nginx.conf /etc/nginx/nginx.conf
@@ -48,11 +49,11 @@ RUN chown -R nginx:nginx /usr/share/nginx/html && \
     chmod -R 755 /usr/share/nginx/html
 
 # Expose ports
-EXPOSE 80 443
+EXPOSE 80
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost/ || exit 1
+    CMD wget -q -O /dev/null http://localhost/ || exit 1
 
 # Start nginx
 CMD ["nginx", "-g", "daemon off;"]

@@ -1,428 +1,116 @@
-# KGuard: Kernel-Level Network Security Monitoring System
+# KGuard
 
-[![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
-[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)]()
-[![Kubernetes](https://img.shields.io/badge/kubernetes-ready-blue.svg)]()
+[![CI](https://github.com/vishesh711/KGuard-Kernel-Level-Port-Monitoring-Security-Dashboard/actions/workflows/ci.yml/badge.svg)](https://github.com/vishesh711/KGuard-Kernel-Level-Port-Monitoring-Security-Dashboard/actions/workflows/ci.yml)
+[![Debug kernels](https://github.com/vishesh711/KGuard-Kernel-Level-Port-Monitoring-Security-Dashboard/actions/workflows/debug-kernel.yml/badge.svg)](https://github.com/vishesh711/KGuard-Kernel-Level-Port-Monitoring-Security-Dashboard/actions/workflows/debug-kernel.yml)
+[![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](LICENSE)
 
-KGuard is a comprehensive, production-ready kernel-level network security monitoring system that provides real-time threat detection and visualization. It combines low-level Linux kernel programming with modern web technologies to create an enterprise-grade security monitoring solution.
+KGuard watches every connection attempt on a Linux host from inside the
+kernel, detects scans, floods, brute force, spoofing, amplification, DNS
+tunnels and known-bad TLS clients, can block attackers in the kernel, and
+shows it all live in a web dashboard.
 
-## 🚀 Features
+![Real attacks against a KGuard host, seen live in the dashboard](docs/images/demo.gif)
 
-### Core Capabilities
-- **Kernel-Level Packet Capture**: High-performance network monitoring using Linux Netfilter hooks
-- **Real-time Threat Detection**: Advanced anomaly detection for port scans, brute force attacks, and suspicious activity
-- **Modern Web Dashboard**: React-based interface with real-time updates via WebSockets
-- **Production Ready**: Docker containerization, comprehensive logging, health monitoring
-- **Scalable Architecture**: Handles high packet rates with minimal performance impact
+*Recorded in a VM by [`scripts/demo/make_demo.sh`](scripts/demo/make_demo.sh): the
+kernel module is loaded and nmap and hping3 attack the host from another
+network namespace. Nothing in it is simulated.*
 
-### Security Features
-- **Port Scan Detection**: Identifies multiple port access attempts from single sources
-- **Suspicious Port Monitoring**: Flags access to commonly attacked ports (SSH, RDP, databases)
-- **High-Frequency Attack Detection**: Detects rapid connection attempts indicating automated attacks
-- **Scan Classification**: Names nmap scan types (SYN, UDP, FIN, NULL, Xmas, ACK, Maimon) and, from TCP fingerprints, the scanning tool
-- **Passive OS Fingerprinting**: Recognises Linux, Windows and macOS senders from TTL, window, MSS and TCP option order
-- **Spoofing, SYN Flood and Amplification Detection**: TTL jumps, bogon/martian sources (also in the kernel), half-open floods, DNS/NTP/memcached reflection
-- **IPFIX Flow Export and Packet Capture on Alert**: flows to any IPFIX collector (nfdump, Wireshark); a TPACKET_V3 ring keeps recent packets and saves a .pcap for each serious alert
-- **TLS Client Fingerprints and DNS Tunnelling**: the eBPF agent samples DNS messages and TLS ClientHellos; the backend records JA3/JA4 and SNI per process and detects DNS tunnels (iodine)
-- **Real-time Alerting**: Immediate notifications for critical security events
-- **Alert Management**: Acknowledgment and resolution workflows for security incidents
+## What it does
 
-### Technical Highlights
-- **Performance**: 10,000+ packets/second processing capability
-- **Memory Efficient**: <50MB kernel module, <200MB backend service
-- **Low Latency**: <100ms from packet capture to dashboard display
-- **Thread-Safe**: Proper synchronization for multi-core systems
-- **Production Tested**: Comprehensive error handling and recovery mechanisms
+- **Captures in the kernel.** A Netfilter module records every packet that
+  opens or uses a connection (IPv4 and IPv6, in, out and forwarded, in every
+  network namespace) with its conntrack state, TCP fingerprint and the
+  process behind it, into lock-free per-CPU rings that user space reads
+  with `mmap()`. Or, without a module, an eBPF engine (XDP and TC) does the
+  same and also samples DNS and TLS handshakes.
+- **Detects and blocks in the kernel** what must be stopped at line rate:
+  port scans, SYN floods from one source, spoofed sources. Blocking is off
+  until you turn it on, and the host's own addresses can never be blocked.
+- **Detects in the backend** what needs history or payloads: scan types
+  (SYN, FIN, NULL, Xmas, ACK, Maimon, UDP), brute force, distributed SYN
+  floods, TTL-based spoofing, amplification, DNS tunnelling, JA3/JA4 TLS
+  fingerprints, OS fingerprints, traffic baselines, threat lists.
+- **Runs on many hosts**: a C agent ships events from each host to one
+  backend, and enforces its block list there.
+- **Fits in**: Prometheus metrics and a Grafana dashboard, Slack, Telegram
+  and e-mail alerts, IPFIX flow export, a pcap of the packets around each
+  serious alert, PostgreSQL, logins with viewer and admin roles.
 
-## 🏗️ Architecture
+![Architecture](docs/images/architecture.svg)
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        KGuard Architecture                       │
-├─────────────────┬─────────────────┬─────────────────────────────┤
-│   Kernel Space  │   User Space    │        Web Interface        │
-│                 │                 │                             │
-│ ┌─────────────┐ │ ┌─────────────┐ │ ┌─────────────────────────┐ │
-│ │   Network   │ │ │   FastAPI   │ │ │      React Dashboard    │ │
-│ │   Packets   │ │ │   Backend   │ │ │                         │ │
-│ │             │ │ │             │ │ │  • Real-time Charts     │ │
-│ │ TCP/UDP/    │ │ │ • SQLite DB │ │ │  • Alert Notifications  │ │
-│ │ ICMP        │ │ │ • Anomaly   │ │ │  • System Status        │ │
-│ └─────────────┘ │ │   Detection │ │ │  • Event Filtering      │ │
-│        │        │ │ • WebSocket │ │ │                         │ │
-│ ┌─────────────┐ │ │   Manager   │ │ │  ┌─────────────────────┐ │ │
-│ │  Netfilter  │ │ └─────────────┘ │ │  │   WebSocket Client  │ │ │
-│ │   Hooks     │ │        │        │ │  │   Data Visualization│ │ │
-│ │             │ │        │        │ │  └─────────────────────┘ │ │
-│ │PRE_ROUTING  │ │        │        │ │              │            │ │
-│ └─────────────┘ │        │        │ │         WebSocket        │ │
-│        │        │        │        │ │         Connection       │ │
-│ ┌─────────────┐ │        │        │ │              │            │ │
-│ │   Circular  │ │        │        │ │              │            │ │
-│ │   Buffer    │ │        │        │ │              │            │ │
-│ │             │ │        │        │ │              │            │ │
-│ │1024 Events  │ │        │        │ │              │            │ │
-│ │Thread-safe  │ │        │        │ │              │            │ │
-│ └─────────────┘ │        │        │ │              │            │ │
-│        │        │        │        │ │              │            │ │
-│ ┌─────────────┐ │        │        │ │              │            │ │
-│ │/proc/kguard │ │────────┼────────┼──────────────────────────────┤ │
-│ │ Interface   │ │        │        │              │            │ │
-│ │             │ │        │        │              │            │ │
-│ │ JSON Output │ │        │        │              │            │ │
-│ └─────────────┘ │        │        │              │            │ │
-└─────────────────┴─────────────────┴──────────────────────────────┘
-         │                  │                       │
-    Kernel Module      Data Collection         Real-time UI
-    (kguard.ko)       & Analysis Service      Updates & Alerts
-```
+How each part works and why it is built that way: [docs/DESIGN.md](docs/DESIGN.md).
 
-## 🛠️ Technology Stack
+## Measured
 
-### Kernel Module (C)
-- **Linux Netfilter Framework**: Packet interception at kernel level
-- **Circular Buffer**: Thread-safe event storage with spinlocks
-- **Proc Filesystem**: JSON interface for user-space communication
-- **Memory Management**: Efficient allocation and cleanup
+Every number here links to where it was measured. KGuard has not yet been
+measured on real hardware, so there is no packets-per-second claim.
 
-### Backend (Python)
-- **FastAPI**: Modern async web framework with automatic OpenAPI documentation
-- **SQLAlchemy**: Database ORM with support for SQLite and PostgreSQL
-- **WebSockets**: Real-time bidirectional communication
-- **Asyncio**: Concurrent processing for high-performance operations
-- **Pydantic**: Data validation and serialization
+| | Result | Source |
+|---|---|---|
+| Kernels | Module builds and passes 84/84 kernel checks on Linux 5.15, 6.1, 6.6, 6.12 and 7.3 | [CI kernel matrix](.github/workflows/ci.yml), [P8.5](ROADMAP.md) |
+| Attacks | 8 of 8 attack demos raise the right alert (35 checks): nmap scan types, hydra, hping3 floods, OS fingerprints, spoofing, amplification, iodine DNS tunnel, TLS | [`make attack-demo`](scripts/attack_demo.sh), [P8.2](ROADMAP.md) |
+| Speed of detection | nmap SYN scan reported 21 ms after its first SYN | [K3.2](ROADMAP.md) |
+| Live dashboard | 26-72 ms from an agent sending an event to its row on screen (8 runs) | [U7.1](ROADMAP.md) |
+| Lossless capture | 40,000 events at 5,000/s, none dropped | [K2.3](ROADMAP.md) |
+| Bounded memory | 1,000,000 spoofed sources keep the tracking table under its cap of 65,536 | [K3.1](ROADMAP.md) |
+| Kernel bug checkers | No lockdep, KCSAN, KASAN or UBSAN report involving kguard; no leak (kmemleak) | ["Debug kernels" workflow](.github/workflows/debug-kernel.yml), [P8.3](ROADMAP.md) |
+| Static analysis | sparse, smatch and checkpatch `--strict` clean | [CI](.github/workflows/ci.yml), [P8.4](ROADMAP.md) |
+| Fuzzing | Packet parsers: 2.48 billion inputs (TCP options, C) and 209 million (TLS, DNS), no crash; nightly in CI | [P8.8](ROADMAP.md), [fuzz workflow](.github/workflows/fuzz.yml) |
+| Backend tests | 89% coverage | [CI](.github/workflows/ci.yml), [P8.9](ROADMAP.md) |
+| Cost per packet | Measured in an emulated VM only, which inflates it many times over | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) |
 
-### Frontend (TypeScript/React)
-- **React 18**: Modern component-based UI with hooks
-- **TypeScript**: Type-safe development with comprehensive type definitions
-- **Tailwind CSS**: Utility-first styling framework
-- **Recharts**: Interactive data visualization library
-- **React Query**: Data fetching and caching
+What it does not catch, and how it can be evaded: [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
 
-### Infrastructure
-- **Docker**: Containerized deployment with multi-stage builds
-- **Nginx**: Reverse proxy and static file serving
-- **Redis**: Caching and session storage
-- **PostgreSQL/SQLite**: Flexible database options
+## Quick start
 
-## 📁 Project Structure
-
-```
-kguard/
-├── kernel/                 # Linux kernel module (C)
-│   ├── src/
-│   │   ├── kguard.h       # Header definitions
-│   │   ├── kguard_main.c  # Module initialization
-│   │   ├── kguard_netfilter.c  # Packet capture
-│   │   ├── kguard_buffer.c     # Circular buffer
-│   │   └── kguard_proc.c       # /proc interface
-│   ├── Makefile           # Build configuration
-│   └── test_*.sh          # Testing scripts
-├── backend/               # FastAPI backend (Python)
-│   ├── app/
-│   │   ├── api/          # REST API endpoints
-│   │   ├── models/       # Database models
-│   │   ├── schemas/      # Pydantic schemas
-│   │   ├── services/     # Business logic
-│   │   └── main.py       # Application entry point
-│   ├── alembic/          # Database migrations
-│   ├── requirements.txt  # Python dependencies
-│   └── Dockerfile        # Container configuration
-├── frontend/              # React frontend (TypeScript)
-│   ├── src/
-│   │   ├── components/   # React components
-│   │   ├── pages/        # Page components
-│   │   ├── hooks/        # Custom hooks
-│   │   ├── services/     # API services
-│   │   └── types/        # TypeScript definitions
-│   ├── package.json      # Node.js dependencies
-│   └── Dockerfile        # Container configuration
-├── docs/                  # Comprehensive documentation
-│   ├── TECHNICAL_DOCUMENTATION.md
-│   ├── API_DOCUMENTATION.md
-│   └── DEPLOYMENT_GUIDE.md
-├── docker-compose.yml     # Development environment
-├── docker-compose.prod.yml # Production environment
-├── Makefile              # Project automation
-└── README.md             # This file
-```
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-**System Requirements:**
-- Linux system (Ubuntu 20.04+ recommended)
-- Kernel headers: `sudo apt install linux-headers-$(uname -r)`
-- Docker and Docker Compose
-- Build tools: `sudo apt install build-essential`
-
-**For Development:**
-- Python 3.9+
-- Node.js 18+
-- Git
-
-### Development Setup
+On a Linux host with Docker, Docker Compose v2 and the kernel headers:
 
 ```bash
-# 1. Clone the repository
-git clone <repository-url>
+git clone https://github.com/vishesh711/KGuard-Kernel-Level-Port-Monitoring-Security-Dashboard.git kguard
 cd kguard
-
-# 2. Setup environment
-make setup
-
-# 3. Build kernel module
-cd kernel
-make clean && make
-cd ..
-
-# 4. Start development services
-make dev
-
-# 5. Load kernel module (requires root)
-sudo make install
-
-# 6. Access the application
-# Frontend: http://localhost:3000
-# Backend API: http://localhost:8000
-# API Documentation: http://localhost:8000/docs
+make setup                    # creates .env: fill in the secrets it lists
+make -C kernel
+sudo modprobe -a nf_conntrack nf_socket_ipv4 nf_socket_ipv6
+sudo insmod kernel/kguard.ko reader_gid=1500
+docker compose -f docker-compose.prod.yml -f docker-compose.kernel.yml up -d --build
 ```
 
-### Production Deployment
+Open `http://localhost/` and log in with `ADMIN_USERNAME` / `ADMIN_PASSWORD`
+from `.env`. The module starts in monitor-only mode: it drops nothing until
+you set `enforce=1`.
+
+A permanent install (DKMS), TLS, agents on more hosts, monitoring and
+upgrades: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+## Repository
+
+| Path | What |
+|---|---|
+| [`kernel/`](kernel/README.md) | The Netfilter module, its UAPI header, `kguardctl`, and its tests (VM suite, selftests, fuzzer) |
+| [`agent/`](agent/README.md) | `kguard-agent`: eBPF programs and the C agent |
+| [`backend/`](backend/README.md) | FastAPI backend: collection, detection, response, API |
+| [`frontend/`](frontend/README.md) | React dashboard |
+| [`scripts/`](scripts) | Attack demos, the two-VM lab, benchmarks, the demo recording |
+| [`monitoring/`](monitoring) | Prometheus and Grafana configuration |
+| [`docs/`](docs/README.md) | Design, threat model, deployment, benchmarks, API reference |
+| [`ROADMAP.md`](ROADMAP.md) | Everything that was built, and how each item was verified |
+
+## Development
 
 ```bash
-# 1. Prepare production environment
-make setup
-
-# 2. Configure production settings
-cp backend/.env.example backend/.env.prod
-# Edit backend/.env.prod with production values
-
-# 3. Build and deploy
-cd kernel && make clean && make && cd ..
-docker-compose -f docker-compose.prod.yml up -d
-sudo make install
-
-# 4. Verify deployment
-curl https://your-domain.com/api/health
+make test           # backend (pytest) and frontend (Vitest)
+make test-kernel    # the kernel suite in a throwaway VM (virtme-ng)
+make attack-demo    # real attacks in a VM, pass/fail per attack
+make lab            # victim and attacker VMs on a private link
+make bench          # packet-rate benchmarks in a VM
 ```
 
-## 📊 Performance Metrics
+CI runs the backend and frontend tests, the kernel suite and selftests in
+KVM guests on five kernels, static analysis, and the debug-kernel builds.
+The attack demos, the lab and the benchmarks need a few minutes to an hour
+in a VM and are run by hand.
 
-### Benchmarks
-- **Packet Processing Rate**: 10,000+ packets/second
-- **Memory Usage**: <50MB kernel module, <200MB backend
-- **CPU Overhead**: <5% on modern systems
-- **Real-time Latency**: <100ms from packet to dashboard
-- **Database Performance**: Handles millions of events efficiently
+## License
 
-### Scalability
-- **Concurrent Connections**: 100+ WebSocket connections
-- **Event Storage**: Optimized for high-volume network data
-- **Alert Processing**: Real-time analysis with configurable thresholds
-- **Resource Efficiency**: Minimal system impact during operation
-
-## 🔒 Security Features
-
-### Threat Detection
-- **Port Scan Detection**: Configurable threshold-based detection
-- **Suspicious Port Monitoring**: Customizable list of monitored ports
-- **High-Frequency Attack Detection**: Rate-based anomaly detection
-- **Protocol Analysis**: TCP, UDP, and ICMP packet inspection
-
-### Security Measures
-- **Input Validation**: Comprehensive validation at all API endpoints
-- **CORS Protection**: Configurable cross-origin request policies
-- **Rate Limiting**: API abuse prevention
-- **Secure Communication**: HTTPS/WSS support with TLS 1.2+
-
-### Alert Management
-- **Severity Levels**: LOW, MEDIUM, HIGH, CRITICAL classifications
-- **Alert Lifecycle**: Acknowledgment and resolution workflows
-- **Notification System**: Real-time alerts via WebSocket
-- **Historical Analysis**: Trend analysis and reporting
-
-## 📚 Documentation
-
-### Comprehensive Guides
-- **[Technical Documentation](docs/TECHNICAL_DOCUMENTATION.md)**: Complete technical overview
-- **[API Documentation](docs/API_DOCUMENTATION.md)**: REST API and WebSocket reference
-- **[Deployment Guide](docs/DEPLOYMENT_GUIDE.md)**: Production deployment instructions
-- **[Benchmarks](docs/BENCHMARKS.md)**: packets/s and CPU cost of the module and eBPF engines, with flame graphs (emulated VM so far)
-
-### Quick References
-- **[Project Summary](PROJECT_SUMMARY.md)**: High-level project overview
-- **[Deployment Instructions](DEPLOYMENT.md)**: Step-by-step deployment
-- **[Commit Notes](COMMIT_NOTES.md)**: Implementation details
-
-## 🧪 Testing
-
-### Kernel Module Testing
-```bash
-# Build and load module
-cd kernel
-make clean && make
-sudo make install
-
-# Test functionality
-cat /proc/kguard
-dmesg | grep kguard
-
-# Generate test traffic
-ping -c 10 8.8.8.8
-nmap -p 1-100 localhost
-```
-
-### Backend Testing
-```bash
-# Run test suite
-cd backend
-pytest
-pytest --cov=app tests/
-
-# API testing
-curl http://localhost:8000/api/health
-curl http://localhost:8000/api/events/
-```
-
-### Frontend Testing
-```bash
-# Run tests
-cd frontend
-npm test
-npm run test:coverage
-
-# Build verification
-npm run build
-```
-
-## 🔧 Development
-
-### Development Workflow
-```bash
-# Start development environment
-make dev
-
-# View logs
-make logs
-
-# Check status
-make status
-
-# Clean up
-make clean
-```
-
-### Code Quality
-```bash
-# Backend linting
-cd backend
-black app/
-isort app/
-flake8 app/
-
-# Frontend linting
-cd frontend
-npm run lint
-npm run lint:fix
-```
-
-## 🚀 Deployment Options
-
-### Docker Compose (Recommended)
-- **Development**: `docker-compose up -d`
-- **Production**: `docker-compose -f docker-compose.prod.yml up -d`
-
-### Kubernetes
-- Complete Kubernetes manifests provided
-- Supports horizontal scaling
-- Includes health checks and monitoring
-
-### Manual Installation
-- Detailed instructions in deployment guide
-- Suitable for custom environments
-- Full control over configuration
-
-## 📈 Monitoring and Observability
-
-### Built-in Monitoring
-- **Health Checks**: Comprehensive system health endpoints
-- **Metrics Collection**: Performance and security metrics
-- **Real-time Dashboards**: Live system status and statistics
-
-### External Integration
-- **Prometheus**: Metrics collection and alerting
-- **Grafana**: Advanced visualization and dashboards
-- **ELK Stack**: Centralized logging and analysis
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our contributing guidelines for details on:
-- Code style and standards
-- Testing requirements
-- Pull request process
-- Issue reporting
-
-## 📄 License
-
-This project is licensed under the GNU General Public License v2.0 - see the [LICENSE](LICENSE) file for details.
-
-**Note**: GPL v2 is required for Linux kernel modules. This ensures that any modifications to the kernel module remain open source.
-
-## ⚠️ Security Notice
-
-**Important**: This project includes a Linux kernel module that requires root privileges to load. 
-
-- Only use in controlled environments
-- Review all code thoroughly before deployment
-- Follow security best practices for production use
-- Monitor system logs for any unusual activity
-
-## 🆘 Support
-
-### Getting Help
-- **Documentation**: Comprehensive guides in the `docs/` directory
-- **Issues**: Report bugs and request features via GitHub issues
-- **Discussions**: Community discussions and Q&A
-
-### Troubleshooting
-- **Common Issues**: See troubleshooting section in documentation
-- **Health Checks**: Use built-in diagnostic tools
-- **Log Analysis**: Comprehensive logging for debugging
-
-## 🎯 Roadmap
-
-### Planned Features
-- **Machine Learning**: Advanced anomaly detection algorithms
-- **Mobile App**: iOS/Android dashboard application
-- **Cloud Integration**: AWS/Azure/GCP deployment templates
-- **Advanced Analytics**: Behavioral analysis and threat intelligence
-
-### Performance Improvements
-- **Kernel Optimization**: Enhanced packet processing efficiency
-- **Database Scaling**: Support for distributed databases
-- **Caching Layer**: Advanced caching strategies
-- **Load Balancing**: Multi-instance deployment support
-
----
-
-## 🏆 Project Status
-
-**KGuard is production-ready** and demonstrates:
-
-✅ **Systems Programming**: Advanced Linux kernel module development  
-✅ **Network Security**: Real-time threat detection and analysis  
-✅ **Backend Development**: Scalable API architecture with FastAPI  
-✅ **Frontend Development**: Modern React dashboard with TypeScript  
-✅ **DevOps**: Complete containerization and deployment automation  
-✅ **Database Design**: Optimized schema for high-volume network data  
-✅ **Real-time Systems**: WebSocket-based live updates  
-✅ **Security Engineering**: Comprehensive protection and monitoring  
-
-**Total Implementation**: 15,000+ lines of code across kernel, backend, and frontend components, representing a complete enterprise-grade security monitoring platform.
-
----
-
-*KGuard - Kernel-level security monitoring for the modern enterprise*
+GNU General Public License v2.0 ([LICENSE](LICENSE)). The kernel module must
+be GPL-compatible to use the kernel interfaces it needs.
