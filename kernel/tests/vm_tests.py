@@ -14,6 +14,7 @@ Needs: python3, curl, nc (OpenBSD netcat), ip (iproute2), nmap.
 """
 
 import errno
+import glob
 import json
 import os
 import re
@@ -374,6 +375,12 @@ def test_tricky_packets():
 def test_perf():
     """K2.11: perf record -e 'kguard:*' sees the module's tracepoints"""
     perf = shutil.which("perf")
+    # Ubuntu's /usr/bin/perf is a wrapper that only runs the perf built for the
+    # running kernel version; any perf binary works for tracepoints, so fall back
+    # to one of the installed builds when booting another kernel (kernel matrix)
+    if perf and subprocess.run([perf, "--version"], capture_output=True).returncode != 0:
+        builds = sorted(glob.glob("/usr/lib/linux-tools*/*/perf") + glob.glob("/usr/lib/linux-tools/*/perf"))
+        perf = builds[-1] if builds else perf
     if not perf:
         check("perf available", False, "perf not installed")
         return
