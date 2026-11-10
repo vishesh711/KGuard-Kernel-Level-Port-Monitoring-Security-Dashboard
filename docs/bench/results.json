@@ -1,0 +1,326 @@
+{
+  "machine": {
+    "kernel": "6.8.0-147-generic",
+    "cpu": "QEMU TCG CPU version 2.5+",
+    "cpus": 4,
+    "virtualization": "qemu",
+    "accelerator": "tcg (emulated, no KVM)",
+    "host": "Intel Xeon @ 2.10GHz, 4 CPUs, no /dev/kvm (container), QEMU 8.2.2"
+  },
+  "seconds": 10,
+  "generator": "trafgen",
+  "runs": [
+    {
+      "mode": "none",
+      "direction": "ingress",
+      "seconds": 10.06,
+      "packets": 217791,
+      "pps": 21642,
+      "cpu_ns_per_packet": 44859.5,
+      "device_rx": 217325,
+      "backlog_drops": 0,
+      "repeat": 0
+    },
+    {
+      "mode": "module",
+      "direction": "ingress",
+      "seconds": 10.01,
+      "packets": 66717,
+      "pps": 6664,
+      "cpu_ns_per_packet": 202796.9,
+      "device_rx": 66766,
+      "backlog_drops": 0,
+      "own_ns_per_packet": 45750,
+      "lost": 0,
+      "repeat": 0
+    },
+    {
+      "mode": "ebpf-generic",
+      "direction": "ingress",
+      "seconds": 10.01,
+      "packets": 47260,
+      "pps": 4719,
+      "cpu_ns_per_packet": 347016.5,
+      "device_rx": 47246,
+      "backlog_drops": 0,
+      "own_ns_per_packet": 79650.1,
+      "bpf_programs": {
+        "kguard_xdp#9": {
+          "runs": 81368,
+          "ns_per_run": 79650.1
+        },
+        "kguard_tc_egress#11": {
+          "runs": 17,
+          "ns_per_run": 84275.9
+        }
+      },
+      "lost": 0,
+      "repeat": 0
+    },
+    {
+      "mode": "ebpf-native",
+      "direction": "ingress",
+      "seconds": 10.01,
+      "packets": 47367,
+      "pps": 4730,
+      "cpu_ns_per_packet": 342432.5,
+      "device_rx": 47363,
+      "backlog_drops": 0,
+      "own_ns_per_packet": 78349.0,
+      "bpf_programs": {
+        "kguard_xdp#26": {
+          "runs": 81589,
+          "ns_per_run": 78349.0
+        },
+        "kguard_tc_egress#28": {
+          "runs": 17,
+          "ns_per_run": 88128.6
+        }
+      },
+      "lost": 0,
+      "repeat": 0
+    },
+    {
+      "mode": "none-egress",
+      "direction": "egress",
+      "seconds": 10.02,
+      "packets": 45511,
+      "pps": 4544,
+      "cpu_ns_per_packet": 212036.7,
+      "device_rx": 45511,
+      "backlog_drops": 0,
+      "repeat": 0
+    },
+    {
+      "mode": "ebpf-tc",
+      "direction": "egress",
+      "seconds": 10.02,
+      "packets": 32907,
+      "pps": 3284,
+      "cpu_ns_per_packet": 403865.4,
+      "device_rx": 32899,
+      "backlog_drops": 0,
+      "own_ns_per_packet": 1327.3,
+      "bpf_programs": {
+        "kguard_xdp#43": {
+          "runs": 46199,
+          "ns_per_run": 95899.0
+        },
+        "kguard_tc_egress#45": {
+          "runs": 60674,
+          "ns_per_run": 1327.3
+        }
+      },
+      "lost": 0,
+      "repeat": 0
+    },
+    {
+      "mode": "none",
+      "direction": "ingress",
+      "seconds": 10.02,
+      "packets": 160095,
+      "pps": 15984,
+      "cpu_ns_per_packet": 60651.5,
+      "device_rx": 160152,
+      "backlog_drops": 0,
+      "repeat": 1
+    },
+    {
+      "mode": "module",
+      "direction": "ingress",
+      "seconds": 10.01,
+      "packets": 55113,
+      "pps": 5503,
+      "cpu_ns_per_packet": 246947.2,
+      "device_rx": 55112,
+      "backlog_drops": 0,
+      "own_ns_per_packet": 43059,
+      "lost": 0,
+      "repeat": 1
+    },
+    {
+      "mode": "ebpf-generic",
+      "direction": "ingress",
+      "seconds": 10.01,
+      "packets": 43518,
+      "pps": 4346,
+      "cpu_ns_per_packet": 341697.7,
+      "device_rx": 43525,
+      "backlog_drops": 0,
+      "own_ns_per_packet": 73096.1,
+      "bpf_programs": {
+        "kguard_xdp#60": {
+          "runs": 71429,
+          "ns_per_run": 73096.1
+        },
+        "kguard_tc_egress#62": {
+          "runs": 52047,
+          "ns_per_run": 1112.7
+        }
+      },
+      "lost": 0,
+      "repeat": 1
+    },
+    {
+      "mode": "ebpf-native",
+      "direction": "ingress",
+      "seconds": 10.03,
+      "packets": 38436,
+      "pps": 3833,
+      "cpu_ns_per_packet": 374128.4,
+      "device_rx": 38413,
+      "backlog_drops": 0,
+      "own_ns_per_packet": 78120.4,
+      "bpf_programs": {
+        "kguard_xdp#77": {
+          "runs": 67777,
+          "ns_per_run": 78120.4
+        },
+        "kguard_tc_egress#79": {
+          "runs": 43343,
+          "ns_per_run": 1069.7
+        }
+      },
+      "lost": 0,
+      "repeat": 1
+    },
+    {
+      "mode": "none-egress",
+      "direction": "egress",
+      "seconds": 10.02,
+      "packets": 61900,
+      "pps": 6179,
+      "cpu_ns_per_packet": 156542.8,
+      "device_rx": 61896,
+      "backlog_drops": 0,
+      "repeat": 1
+    },
+    {
+      "mode": "ebpf-tc",
+      "direction": "egress",
+      "seconds": 10.01,
+      "packets": 48665,
+      "pps": 4861,
+      "cpu_ns_per_packet": 285626.2,
+      "device_rx": 48665,
+      "backlog_drops": 0,
+      "own_ns_per_packet": 968.1,
+      "bpf_programs": {
+        "kguard_xdp#94": {
+          "runs": 69692,
+          "ns_per_run": 68782.7
+        },
+        "kguard_tc_egress#96": {
+          "runs": 81834,
+          "ns_per_run": 968.1
+        }
+      },
+      "lost": 0,
+      "repeat": 1
+    },
+    {
+      "mode": "none",
+      "direction": "ingress",
+      "seconds": 10.03,
+      "packets": 167555,
+      "pps": 16706,
+      "cpu_ns_per_packet": 57951.1,
+      "device_rx": 167499,
+      "backlog_drops": 0,
+      "repeat": 2
+    },
+    {
+      "mode": "module",
+      "direction": "ingress",
+      "seconds": 10.01,
+      "packets": 66025,
+      "pps": 6596,
+      "cpu_ns_per_packet": 209163.2,
+      "device_rx": 66072,
+      "backlog_drops": 0,
+      "own_ns_per_packet": 39890,
+      "lost": 0,
+      "repeat": 2
+    },
+    {
+      "mode": "ebpf-generic",
+      "direction": "ingress",
+      "seconds": 10.01,
+      "packets": 48897,
+      "pps": 4884,
+      "cpu_ns_per_packet": 301859.0,
+      "device_rx": 48849,
+      "backlog_drops": 0,
+      "own_ns_per_packet": 67953.9,
+      "bpf_programs": {
+        "kguard_xdp#111": {
+          "runs": 74111,
+          "ns_per_run": 67953.9
+        },
+        "kguard_tc_egress#113": {
+          "runs": 67614,
+          "ns_per_run": 962.6
+        }
+      },
+      "lost": 0,
+      "repeat": 2
+    },
+    {
+      "mode": "ebpf-native",
+      "direction": "ingress",
+      "seconds": 10.04,
+      "packets": 44130,
+      "pps": 4398,
+      "cpu_ns_per_packet": 328348.1,
+      "device_rx": 44127,
+      "backlog_drops": 0,
+      "own_ns_per_packet": 71547.3,
+      "bpf_programs": {
+        "kguard_xdp#128": {
+          "runs": 69004,
+          "ns_per_run": 71547.3
+        },
+        "kguard_tc_egress#130": {
+          "runs": 62827,
+          "ns_per_run": 895.1
+        }
+      },
+      "lost": 0,
+      "repeat": 2
+    },
+    {
+      "mode": "none-egress",
+      "direction": "egress",
+      "seconds": 10.01,
+      "packets": 70884,
+      "pps": 7083,
+      "cpu_ns_per_packet": 136843.3,
+      "device_rx": 70914,
+      "backlog_drops": 0,
+      "repeat": 2
+    },
+    {
+      "mode": "ebpf-tc",
+      "direction": "egress",
+      "seconds": 10.03,
+      "packets": 30838,
+      "pps": 3076,
+      "cpu_ns_per_packet": 443932.8,
+      "device_rx": 30839,
+      "backlog_drops": 0,
+      "own_ns_per_packet": 1915.4,
+      "bpf_programs": {
+        "kguard_xdp#145": {
+          "runs": 45059,
+          "ns_per_run": 114204.3
+        },
+        "kguard_tc_egress#147": {
+          "runs": 53727,
+          "ns_per_run": 1915.4
+        }
+      },
+      "lost": 0,
+      "repeat": 2
+    }
+  ]
+}

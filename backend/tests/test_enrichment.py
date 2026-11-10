@@ -178,3 +178,9 @@ def test_update_downloads_and_keeps_old_copies_on_failure(tmp_path, list_server)
     assert "404" in update(urls=missing, directory=str(target))["spamhaus_drop"]
     assert (target / "spamhaus_drop.txt").read_text() == SPAMHAUS  # previous copy kept
     assert [p.name for p in target.iterdir()] == ["spamhaus_drop.txt"]  # no temp files left
+
+
+def test_first_lookup_loads_lists_on_a_fresh_boot(lists, monkeypatch):
+    """time.monotonic() is small right after boot (CI runners): the first match still loads"""
+    monkeypatch.setattr("app.services.enrichment.time.monotonic", lambda: 5.0)
+    assert ThreatLists(str(lists)).match(ipaddress.ip_address("5.188.10.7")) == ["firehol_level1"]

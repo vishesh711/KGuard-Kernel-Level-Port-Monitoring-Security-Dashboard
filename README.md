@@ -250,6 +250,7 @@ curl https://your-domain.com/api/health
 - **[Technical Documentation](docs/TECHNICAL_DOCUMENTATION.md)**: Complete technical overview
 - **[API Documentation](docs/API_DOCUMENTATION.md)**: REST API and WebSocket reference
 - **[Deployment Guide](docs/DEPLOYMENT_GUIDE.md)**: Production deployment instructions
+- **[Benchmarks](docs/BENCHMARKS.md)**: packets/s and CPU cost of the module and eBPF engines, with flame graphs (emulated VM so far)
 
 ### Quick References
 - **[Project Summary](PROJECT_SUMMARY.md)**: High-level project overview

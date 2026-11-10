@@ -90,8 +90,10 @@ class Lab:
 class AlertWatch:
     def __enter__(self):
         self.proc = subprocess.Popen(h.CTL + ["--json", "watch"], stdout=subprocess.PIPE,
-                                     stderr=subprocess.DEVNULL, text=True)
-        time.sleep(0.5)
+                                     stderr=subprocess.PIPE, text=True)
+        # kguardctl says "watching ..." once it has joined the multicast group;
+        # a fixed sleep misses alerts when Python starts slowly (emulated VMs)
+        self.proc.stderr.readline()
         return self
 
     def __exit__(self, *exc):
@@ -143,16 +145,21 @@ def test_block_and_expiry():
     """K3.4: blocked sources are dropped; blocks expire"""
     reset_guard()
     ctl("set", "enforce=1")
-    ctl("block", ATK4, "--timeout", "8")
-    before = stats()["block_drops"]
-    h.check("enforce: blocked source cannot connect", not reach())
-    h.check("enforce: drops are counted", stats()["block_drops"] > before)
+    # Each kguardctl run takes a second or two in an emulated VM, so the
+    # timeout leaves room and the listing comes right after the block
+    timeout = 20
+    blocked_at = time.monotonic()
+    ctl("block", ATK4, "--timeout", str(timeout))
     listed = json.loads(ctl("--json", "blocks").stdout)
     entry = listed[0] if listed else {}
     h.check("block is listed with its timeout and reason",
-            entry.get("address") == ATK4 and entry.get("reason") == "manual" and 0 < entry.get("expires_in", 0) <= 8,
-            listed)
-    time.sleep(9)  # timeout + garbage collection
+            entry.get("address") == ATK4 and entry.get("reason") == "manual"
+            and 0 < entry.get("expires_in", 0) <= timeout, repr(listed))
+    before = stats()["block_drops"]
+    h.check("enforce: blocked source cannot connect", not reach())
+    h.check("enforce: drops are counted", stats()["block_drops"] > before)
+    # Wait out the timeout, plus a second for garbage collection
+    time.sleep(max(0.0, blocked_at + timeout + 1 - time.monotonic()))
     gone = not json.loads(ctl("--json", "blocks").stdout)
     h.check("block expires and the source gets through again", reach() and gone)
     reset_guard()
@@ -272,7 +279,14 @@ for i in range({count}):
     src = struct.pack("!I", (10 << 24) + (64 << 16) + i + 1)
     udp = struct.pack("!HHHH", 30000, 9999, 9, 0) + b"x"
     ip = struct.pack("!BBHHHBBH4s4s", 0x45, 0, 20 + len(udp), 0, 0, 64, 17, 0, src, dst)
-    raw.sendto(ip + udp, ("{HOST4}", 0))
+    while True:
+        try:
+            raw.sendto(ip + udp, ("{HOST4}", 0))
+            break
+        except OSError as e:  # ENOBUFS: the queue is full (fast, KVM-backed VMs); wait for room
+            if e.errno != 105:
+                raise
+            time.sleep(0.001)
 """
     in_ns([sys.executable, "-c", code], check=True)
 
@@ -359,8 +373,10 @@ def test_source_table_cap():
     log = h.sh("dmesg")
     h.check("no slab objects left behind at unload", "still has objects" not in log and "kguard_src" not in log)
 
-    if os.path.exists("/sys/kernel/debug/kcsan"):
-        print("SKIP  1,000,000-source scale test on a KCSAN kernel (hours under emulation)", flush=True)
+    sanitizer = ("KCSAN" if os.path.exists("/sys/kernel/debug/kcsan") else
+                 "KASAN" if "KernelAddressSanitizer initialized" in h.sh("dmesg") else None)
+    if sanitizer:
+        print(f"SKIP  1,000,000-source scale test on a {sanitizer} kernel (hours under emulation)", flush=True)
         return
 
     # One million distinct sources with the default cap (65,536). Paced, and with a long receive

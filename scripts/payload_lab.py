@@ -311,7 +311,11 @@ def main():
         setup()
         start_backend()
         start_agent()
+        only = os.environ.get("LAB_TESTS", "").split(",")  # e.g. LAB_TESTS=dns
         for test in (test_tls_fingerprints, test_dns):
+            if only != [""] and test.__name__.removeprefix("test_") not in only:
+                continue
+            print(f"== {test.__name__.removeprefix('test_')}", flush=True)
             try:
                 test()
             except Exception as e:

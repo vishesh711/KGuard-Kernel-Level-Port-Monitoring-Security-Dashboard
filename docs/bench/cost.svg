@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="236" font-family="sans-serif" font-size="12"><rect width="100%" height="100%" fill="#fff"/><text x="8" y="20" font-size="14" font-weight="bold">CPU time per packet (lower is better)</text>
+<text x="182" y="49" text-anchor="end">no monitoring</text>
+<rect x="190" y="34" width="60.3" height="22" fill="#f97316"/>
+<text x="256.3" y="49">57,951 ns</text>
+<text x="182" y="81" text-anchor="end">C module (Netfilter)</text>
+<rect x="190" y="66" width="217.5" height="22" fill="#f97316"/>
+<text x="413.5" y="81">209,163 ns</text>
+<text x="182" y="113" text-anchor="end">eBPF XDP, generic</text>
+<rect x="190" y="98" width="355.3" height="22" fill="#f97316"/>
+<text x="551.3" y="113">341,698 ns</text>
+<text x="182" y="145" text-anchor="end">eBPF XDP, native</text>
+<rect x="190" y="130" width="356.1" height="22" fill="#f97316"/>
+<text x="552.1" y="145">342,432 ns</text>
+<text x="182" y="177" text-anchor="end">no monitoring (egress)</text>
+<rect x="190" y="162" width="162.8" height="22" fill="#f97316"/>
+<text x="358.8" y="177">156,543 ns</text>
+<text x="182" y="209" text-anchor="end">eBPF TC egress</text>
+<rect x="190" y="194" width="420.0" height="22" fill="#f97316"/>
+<text x="616.0" y="209">403,865 ns</text>
+</svg>

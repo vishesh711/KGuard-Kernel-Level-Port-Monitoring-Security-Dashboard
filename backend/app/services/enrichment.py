@@ -94,7 +94,9 @@ class ThreatLists:
         self.lists: Dict[str, Dict[int, Tuple[List[int], List[int]]]] = {}
         self.sizes: Dict[str, int] = {}
         self.signature = None
-        self.checked = 0.0
+        # Never checked: time.monotonic() counts from boot, so 0.0 would
+        # skip the first load on a machine up for less than a minute
+        self.checked = float("-inf")
 
     @staticmethod
     def parse(text: str) -> List[ipaddress._BaseNetwork]:
