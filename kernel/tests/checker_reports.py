@@ -9,14 +9,19 @@ LOG holds the guest's kernel log between "=== kernel log" and "=== end
 kernel log". A report starts at a checker's headline (BUG: KCSAN/KASAN,
 UBSAN, lockdep, WARNING, ...) and runs to the line that closes it ("====="
 for KCSAN and KASAN, "</TASK>" or "---[ end trace" for the others), the
-next headline, or 80 lines. It involves kguard when any of its lines
-names kguard (a kguard function in a stack, or the module in a WARNING's
-"Modules linked in" or RIP line). Prints both lists and exits 1 when a
-report involves kguard.
+next headline, or 80 lines.
 
-A vanilla debug kernel under load reports some races of its own (e.g.
-poll_schedule_timeout/pollwake in fs/select.c, virtqueue_kick_prepare in
-virtio); those are listed but not counted against the module.
+Whether a report involves kguard:
+  - KCSAN, KASAN and UBSAN name the code that made the bad access in their
+    headline ("data-race in A / B", "slab-out-of-bounds in A", "... in
+    file.c:line"): the report is ours when that names kguard. The stack
+    below can pass through kguard without the bug being ours: our hook
+    calling wake_up() shows up under the kernel's own benign
+    poll_schedule_timeout / pollwake race in fs/select.c.
+  - lockdep, WARNING and the other reports have no such headline: the
+    report is ours when any line names kguard (a frame, or the module in
+    "Modules linked in").
+Prints both lists and exits 1 when a report involves kguard.
 """
 
 import re
@@ -62,11 +67,20 @@ def reports(lines):
     return found
 
 
+ACCESS_CHECKERS = re.compile(r"BUG: KCSAN: |BUG: KASAN: |UBSAN: ")
+
+
+def involves_kguard(report):
+    if ACCESS_CHECKERS.search(report[0]):
+        return "kguard" in report[0]
+    return any("kguard" in line for line in report)
+
+
 def main():
     text = open(sys.argv[1], errors="replace").read()
     ours, others = [], []
     for report in reports(kernel_log(text)):
-        (ours if any("kguard" in line for line in report) else others).append(report)
+        (ours if involves_kguard(report) else others).append(report)
     for title, group in (("involving kguard", ours), ("elsewhere in the kernel (not counted)", others)):
         print(f"{len(group)} checker report(s) {title}")
         for report in group:
