@@ -4,7 +4,7 @@ import { Hosts } from './Hosts'
 import { renderWithProviders } from '../test/render'
 import { api } from '../services/api'
 
-vi.mock('../services/api', () => ({ api: { getAgents: vi.fn() } }))
+vi.mock('../services/api', () => ({ api: { getAgents: vi.fn(), getKernelCounters: vi.fn() } }))
 
 const mocked = vi.mocked(api)
 
@@ -26,7 +26,10 @@ const agent = {
 }
 
 describe('Hosts', () => {
-  beforeEach(() => vi.resetAllMocks())
+  beforeEach(() => {
+    vi.resetAllMocks()
+    mocked.getKernelCounters.mockResolvedValue({ available: false, reason: 'kernel module not loaded' })
+  })
 
   it('lists agents with their status, engine and counts', async () => {
     mocked.getAgents.mockResolvedValue([

@@ -1,6 +1,7 @@
 # KGuard Database Models Package
 
 from .agent import Agent
+from .listener import KnownListener, ListenerBaseline
 from .network_event import NetworkEvent
 from .payload import DnsQuery, TlsHandshake
 from .response import AllowEntry, AuditEntry, Block
@@ -13,6 +14,8 @@ __all__ = [
     "AllowEntry",
     "AuditEntry",
     "Block",
+    "KnownListener",
+    "ListenerBaseline",
     "DnsQuery",
     "NetworkEvent",
     "SecurityAlert",

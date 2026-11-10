@@ -67,6 +67,29 @@ describe('LiveUpdatesProvider', () => {
     return { view, socket, invalidate }
   }
 
+  function setupWithData() {
+    const queryClient = new QueryClient()
+    const page = (ids: number[], size: number) => ({
+      items: ids.map((id) => ({ id })),
+      total: ids.length,
+      page: 1,
+      size,
+      pages: 1,
+    })
+    queryClient.setQueryData(['events', 'list', 1, {}], page([2, 1], 2))
+    queryClient.setQueryData(['events', 'recent', 8], page([2, 1], 8))
+    queryClient.setQueryData(['events', 'list', 1, { protocol: 'UDP' }], page([], 50))
+    render(
+      <QueryClientProvider client={queryClient}>
+        <LiveUpdatesProvider>
+          <Status />
+        </LiveUpdatesProvider>
+      </QueryClientProvider>,
+    )
+    const socket = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]
+    return { socket, client: queryClient }
+  }
+
   it('reports the connection state', () => {
     const { view, socket } = setup()
     expect(view.getByText('disconnected')).toBeInTheDocument()
@@ -96,9 +119,32 @@ describe('LiveUpdatesProvider', () => {
         socket.receive({ type: 'network_event', data: { id: i }, timestamp: '' })
       }
     })
-    const eventRefreshes = invalidate.mock.calls.filter(
-      ([filters]) => JSON.stringify(filters) === JSON.stringify({ queryKey: ['events'] }),
-    )
+    const eventRefreshes = invalidate.mock.calls.filter(([filters]) => filters?.queryKey?.[0] === 'events')
     expect(eventRefreshes).toHaveLength(1)
+  })
+
+  it('puts new events at the top of the newest-events lists without a request', () => {
+    const { socket, client } = setupWithData()
+    act(() => socket.open())
+    act(() =>
+      socket.receive({ type: 'network_event', data: { id: 99, src_ip: '203.0.113.5' }, timestamp: '' }),
+    )
+    const first = client.getQueryData<{ items: { id: number }[]; total: number; pages: number }>([
+      'events',
+      'list',
+      1,
+      {},
+    ])
+    expect(first?.items.map((e) => e.id)).toEqual([99, 2]) // size 2: the oldest falls off
+    expect(first?.total).toBe(3)
+    expect(first?.pages).toBe(2)
+    expect(client.getQueryData<{ items: { id: number }[] }>(['events', 'recent', 8])?.items[0].id).toBe(99)
+    // A filtered list is not touched (it refreshes from the server instead)
+    expect(
+      client.getQueryData<{ items: { id: number }[] }>(['events', 'list', 1, { protocol: 'UDP' }])?.items,
+    ).toEqual([])
+    // The same event twice is not added twice
+    act(() => socket.receive({ type: 'network_event', data: { id: 99 }, timestamp: '' }))
+    expect(client.getQueryData<{ total: number }>(['events', 'list', 1, {}])?.total).toBe(3)
   })
 })

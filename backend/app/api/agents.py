@@ -37,6 +37,7 @@ from ..services import auth
 from ..services.data_collector import data_collector
 from ..services.payloads import payload_service
 from ..services.response import response_engine
+from .sockets import SocketSnapshot, ensure_baseline
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -140,6 +141,19 @@ async def ingest(
 
     return {"accepted": stored, "rejected": len(body.events) - len(events),
             "payloads_accepted": samples.get("accepted", 0)}
+
+
+@router.post("/sockets")
+async def report_sockets(body: SocketSnapshot, agent: Agent = Depends(current_agent),
+                         db: Session = Depends(get_db)):
+    """The agent's latest listening sockets and connections (U7.2), every few seconds"""
+    agent.sockets = body.model_dump()
+    agent.sockets_at = datetime.utcnow()
+    agent.last_seen = datetime.utcnow()
+    db.commit()
+    # The agent's first report is its host's normal set of listeners
+    ensure_baseline(db, agent.id, agent.sockets)
+    return {"listeners": len(body.listeners), "connections": len(body.connections)}
 
 
 @router.get("/blocklist", response_class=PlainTextResponse)

@@ -2,6 +2,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { useAgents } from '../hooks/queries'
 import { parseServerDate } from '../lib/time'
 import { AgentInfo } from '../types'
+import { KernelHealth } from '../components/KernelHealth'
 
 const ENGINE_LABELS: Record<string, string> = {
   module: 'Kernel module',
@@ -77,6 +78,8 @@ export function Hosts() {
         <h1 className="text-2xl font-bold text-gray-900">Hosts</h1>
         <p className="mt-1 text-sm text-gray-600">Servers sending events through kguard-agent</p>
       </div>
+
+      <KernelHealth />
 
       <div className="card overflow-x-auto">
         {agents.isError ? (

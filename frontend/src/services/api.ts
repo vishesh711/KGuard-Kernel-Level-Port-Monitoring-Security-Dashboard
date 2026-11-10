@@ -5,6 +5,8 @@ import {
   AuditEntry,
   Block,
   ResponseStatus,
+  SocketSnapshot,
+  KernelCounters,
   NetworkEvent,
   SecurityAlert,
   NetworkEventStats,
@@ -207,6 +209,21 @@ export const api = {
 
   async getResponseStatus(): Promise<ResponseStatus> {
     const response = await apiClient.get('/api/response/status')
+    return response.data
+  },
+
+  // Listening ports and connections (U7.2)
+  async getSockets(hostId = 0): Promise<SocketSnapshot> {
+    const response = await apiClient.get('/api/sockets', { params: { host_id: hostId } })
+    return response.data
+  },
+
+  async markListenerKnown(body: { host_id: number; proto: string; port: number; process: string }) {
+    await apiClient.post('/api/sockets/known', body)
+  },
+
+  async getKernelCounters(): Promise<KernelCounters> {
+    const response = await apiClient.get('/api/health/kernel/counters')
     return response.data
   },
 

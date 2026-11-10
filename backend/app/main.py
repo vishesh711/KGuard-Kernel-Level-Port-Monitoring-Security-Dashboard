@@ -24,7 +24,9 @@ from .api import (
     notifications_router,
     payloads_router,
     response_router,
+    sockets_router,
 )
+from .api.sockets import baseline_this_server
 from .config import settings
 from .database import check_db_connection, engine, init_db
 from .logging_setup import RequestContextMiddleware, configure_logging
@@ -127,6 +129,8 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("Database connection failed")
     logger.info("Database initialized successfully")
     ensure_bootstrap_admin()
+    # This server's listening sockets now are its normal set (first start only)
+    await asyncio.get_running_loop().run_in_executor(None, baseline_this_server)
 
     packet_capture.start()
     notifier.start()
@@ -198,6 +202,7 @@ app.include_router(agents_router)
 app.include_router(payloads_router, dependencies=logged_in)
 app.include_router(response_router, dependencies=logged_in)
 app.include_router(notifications_router, dependencies=logged_in)
+app.include_router(sockets_router, dependencies=logged_in)
 
 
 @app.get("/")

@@ -6,6 +6,7 @@
  */
 
 #include <dirent.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +23,8 @@ struct owner_entry {
 static struct owner_entry *owners;
 static size_t nr_owners;
 static double last_scan = -10;
+/* The reader thread (module engine) and the sync thread (socket reports) both look up */
+static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 
 static double now_s(void)
 {
@@ -120,15 +123,20 @@ static const struct owner_entry *find(uint64_t inode)
 
 bool procres_lookup(uint64_t inode, uint32_t *pid, char comm[16])
 {
-	const struct owner_entry *e = find(inode);
+	const struct owner_entry *e;
+	bool found = false;
 
+	pthread_mutex_lock(&lock);
+	e = find(inode);
 	if (!e && now_s() - last_scan >= 1.0) {
 		scan();
 		e = find(inode);
 	}
-	if (!e)
-		return false;
-	*pid = e->pid;
-	memcpy(comm, e->comm, 16);
-	return true;
+	if (e) {
+		*pid = e->pid;
+		memcpy(comm, e->comm, 16);
+		found = true;
+	}
+	pthread_mutex_unlock(&lock);
+	return found;
 }

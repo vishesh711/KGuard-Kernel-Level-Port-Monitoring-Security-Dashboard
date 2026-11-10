@@ -7,6 +7,7 @@ This module provides health check and system status endpoints.
 import os
 import time
 from datetime import datetime
+from typing import Optional
 
 import psutil
 from fastapi import APIRouter, Depends, HTTPException
@@ -21,6 +22,7 @@ from ..services.auth import current_user
 from ..services.data_collector import data_collector
 from ..services.enrichment import enricher
 from ..services.flow_export import flow_exporter
+from ..services.kguard_netlink import KGuardControlSocket
 from ..services.local_enforcer import local_enforcer
 from ..services.notifier import notifier
 from ..services.packet_capture import packet_capture
@@ -231,6 +233,43 @@ def _get_kernel_recommendations(status: dict) -> list:
         )
 
     return recommendations
+
+
+def ring_capacity() -> Optional[int]:
+    """Events all rings hold: possible CPUs x per-CPU slots (as debugfs "ring_capacity")"""
+    device = data_collector.device
+    if device is not None:
+        return device.nr_rings * device.slots
+    try:
+        size = int(open("/sys/module/kguard/parameters/buffer_size").read())
+        possible = open("/sys/devices/system/cpu/possible").read().strip()
+    except (OSError, ValueError):
+        return None
+    cpus = max(int(part.split("-")[-1]) for part in possible.split(",")) + 1
+    slots = 1 << (max(64, min(size, 262144)) - 1).bit_length()
+    return cpus * slots
+
+
+@router.get("/kernel/counters", dependencies=[Depends(current_user)])
+async def kernel_counters():
+    """
+    The kernel module's own counters over Generic Netlink: packets seen,
+    events written and dropped, ring fill, nanoseconds per packet, guard
+    counters. The same numbers as /sys/kernel/debug/kguard/stats.
+    """
+    try:
+        sock = KGuardControlSocket()
+    except OSError as e:
+        return {"available": False, "reason": f"kernel module not loaded ({e.strerror or e})"}
+    try:
+        stats = sock.stats()
+        enforcing = sock.enforcing()
+    except OSError as e:
+        return {"available": False, "reason": e.strerror or str(e)}
+    finally:
+        sock.close()
+    return {"available": True, "stats": stats, "ring_capacity": ring_capacity(), "enforcing": enforcing,
+            "reader": data_collector.active_source}
 
 
 @router.get("/services", dependencies=[Depends(current_user)])

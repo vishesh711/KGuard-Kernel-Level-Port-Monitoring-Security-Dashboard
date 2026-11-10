@@ -318,3 +318,37 @@ export interface ResponseStatus {
     synced_at: string | null
   }[]
 }
+
+/** A socket from /proc/net, with its process (U7.2) */
+export interface SocketInfo {
+  proto: 'TCP' | 'UDP'
+  family: number
+  local: string
+  lport: number
+  remote: string
+  rport: number
+  state: string
+  uid: number
+  user: string | null
+  pid: number | null
+  process: string | null
+  /** Listeners only: not in the host's baseline or marked known */
+  new?: boolean
+}
+
+export interface SocketSnapshot {
+  host: string
+  taken_at: string | null
+  listeners: SocketInfo[]
+  connections: SocketInfo[]
+}
+
+/** The kernel module's counters, as in /sys/kernel/debug/kguard/stats (U7.7) */
+export interface KernelCounters {
+  available: boolean
+  reason?: string
+  stats?: Record<string, number>
+  ring_capacity?: number | null
+  enforcing?: boolean | null
+  reader?: string | null
+}

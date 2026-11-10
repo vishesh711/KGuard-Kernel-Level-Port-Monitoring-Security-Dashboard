@@ -35,12 +35,17 @@ KGUARD_GENL_MCGRP = "events"
 # enum kguard_genl_cmd
 KGUARD_CMD_CONFIG_CHANGED = 4
 KGUARD_CMD_ALERT = 5
+KGUARD_CMD_GET_STATS = 1
 KGUARD_CMD_GET_CONFIG = 2
 KGUARD_CMD_BLOCK_ADD = 6  # present from module v3 on, which also sends alerts
 KGUARD_CMD_BLOCK_DEL = 7
 
 # enum kguard_genl_attr
 KGUARD_ATTR_CFG_ENFORCE = 22
+# GET_STATS reply: attribute id -> name (as in kguardctl and debugfs "stats")
+STATS = {1: "packets", 2: "events", 3: "dropped", 4: "filtered", 5: "ns_per_packet", 6: "ring_fill",
+         7: "netns_hooked", 15: "sources", 16: "track_full", 17: "alerts", 18: "block_drops",
+         19: "rate_drops", 20: "would_drop", 21: "blocks", 43: "spoofed"}
 KGUARD_ATTR_ADDR = 29
 KGUARD_ATTR_TIMEOUT = 31
 KGUARD_ATTR_NETNS = 34
@@ -234,6 +239,15 @@ class KGuardControlSocket:
 
     def block_del(self, address: str) -> None:
         self.request(KGUARD_CMD_BLOCK_DEL, attr(KGUARD_ATTR_ADDR, ipaddress.ip_address(address).packed))
+
+    def stats(self) -> Dict[str, int]:
+        """The module's counters (GET_STATS needs no privileges)"""
+        values: Dict[str, int] = {}
+        for payload in self.request(KGUARD_CMD_GET_STATS):
+            for attr_id, raw in parse_attrs(payload).items():
+                if attr_id in STATS and len(raw) >= 8:
+                    values[STATS[attr_id]] = struct.unpack("Q", raw[:8])[0]
+        return values
 
     def enforcing(self) -> Optional[bool]:
         """Whether the module drops blocked traffic (enforce=1), or None if unknown"""

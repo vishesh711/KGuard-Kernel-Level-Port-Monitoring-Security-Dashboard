@@ -11,6 +11,7 @@ import { Hosts } from './pages/Hosts'
 import { Login } from './pages/Login'
 import { AlertDetail } from './pages/AlertDetail'
 import { Blocks } from './pages/Blocks'
+import { Processes } from './pages/Processes'
 
 function App() {
   const { session } = useAuth()
@@ -27,6 +28,7 @@ function App() {
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/hosts" element={<Hosts />} />
           <Route path="/blocks" element={<Blocks />} />
+          <Route path="/processes" element={<Processes />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </Layout>

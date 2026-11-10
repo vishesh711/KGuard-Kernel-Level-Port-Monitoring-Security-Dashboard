@@ -8,7 +8,8 @@ from .health import router as health_router
 from .notifications import router as notifications_router
 from .payloads import router as payloads_router
 from .response import router as response_router
+from .sockets import router as sockets_router
 
 __all__ = ["agents_router", "auth_router", "events_router", "alerts_router", "health_router",
            "notifications_router", "payloads_router",
-           "response_router"]
+           "response_router", "sockets_router"]

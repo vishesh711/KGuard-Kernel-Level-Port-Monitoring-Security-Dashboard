@@ -123,6 +123,9 @@ void buf_printf(struct buf *b, const char *fmt, ...) __attribute__((format(print
 void json_event(struct buf *b, const struct kguard_event *ev);
 void json_payload(struct buf *b, const struct kguard_payload *p);
 
+/* sockets.c: {"listeners":[...],"connections":[...]} for this host */
+void sockets_json(struct buf *b);
+
 /* sender.c */
 int sender_enroll(const char *server, const char *key, const char *name, const char *state_dir);
 char *sender_load_token(const char *state_dir);
