@@ -83,6 +83,27 @@ install: all
 	sudo modprobe -a nf_conntrack nf_socket_ipv4 nf_socket_ipv6
 	sudo insmod kguard.ko
 
+# Permanent install with DKMS (root): rebuilt for every new kernel, loaded at
+# boot. Module options (e.g. reader_gid=1500) go in /etc/modprobe.d/kguard.conf.
+VERSION := $(shell sed -n 's/^\#define KGUARD_MODULE_VERSION[[:space:]]*"\(.*\)"/\1/p' src/kguard.h)
+DKMS_SRC := /usr/src/kguard-$(VERSION)
+dkms-install:
+	@test -n "$(VERSION)" || { echo "no KGUARD_MODULE_VERSION in src/kguard.h"; exit 1; }
+	sudo rm -rf $(DKMS_SRC)
+	sudo mkdir -p $(DKMS_SRC)
+	sudo cp -r Makefile src include $(DKMS_SRC)/
+	sed 's/@VERSION@/$(VERSION)/' dkms.conf | sudo tee $(DKMS_SRC)/dkms.conf >/dev/null
+	sudo dkms install kguard/$(VERSION)
+	echo kguard | sudo tee /etc/modules-load.d/kguard.conf >/dev/null
+	test -f /etc/modprobe.d/kguard.conf || \
+		echo "options kguard reader_gid=1500" | sudo tee /etc/modprobe.d/kguard.conf >/dev/null
+	sudo modprobe kguard
+
+dkms-uninstall:
+	-sudo modprobe -r kguard
+	-sudo dkms remove kguard/$(VERSION) --all
+	sudo rm -rf $(DKMS_SRC) /etc/modules-load.d/kguard.conf
+
 # Uninstall target (requires root)
 uninstall:
 	sudo rmmod kguard
@@ -110,4 +131,4 @@ help:
 	@echo "  logs      - View recent kernel logs for KGuard"
 	@echo "  help      - Show this help message"
 
-.PHONY: all clean checkpatch sparse smatch selftest fuzz tools install uninstall status logs help
+.PHONY: all clean checkpatch sparse smatch selftest dkms-install dkms-uninstall fuzz tools install uninstall status logs help

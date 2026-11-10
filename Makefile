@@ -1,100 +1,82 @@
-# KGuard Project Makefile
+# KGuard: top-level targets. Component details are in kernel/, agent/,
+# backend/ and frontend/ (each has its own Makefile or scripts and README).
 
-.PHONY: help setup build clean test install uninstall dev prod logs attack-demo lab bench
+COMPOSE ?= docker compose
 
-# Default target
+.PHONY: help setup build clean test test-kernel dev prod down install uninstall status logs \
+	attack-demo lab bench
+
 help:
-	@echo "KGuard Security Monitoring System"
+	@echo "KGuard"
 	@echo ""
-	@echo "Available targets:"
-	@echo "  setup     - Set up development environment"
-	@echo "  build     - Build all components"
-	@echo "  clean     - Clean build artifacts"
-	@echo "  test      - Run all tests"
-	@echo "  dev       - Start development environment"
-	@echo "  prod      - Start production environment"
-	@echo "  install   - Install kernel module (requires root)"
-	@echo "  uninstall - Uninstall kernel module (requires root)"
-	@echo "  logs      - View system logs"
-	@echo "  attack-demo - Run every attack against KGuard in a VM, print pass/fail"
-	@echo "  bench     - Packet-rate and CPU benchmarks in a VM (docs/BENCHMARKS.md)"
-	@echo "  lab       - Victim and attacker VMs with KGuard and attack tools"
-	@echo "  help      - Show this help message"
+	@echo "  setup        Check prerequisites; create .env and backend/.env from the examples"
+	@echo "  build        Build the kernel module, the agent and the containers"
+	@echo "  test         Backend and frontend tests (local Python and Node)"
+	@echo "  test-kernel  The kernel suite in a throwaway VM (virtme-ng; see kernel/README.md)"
+	@echo "  dev          Start the development stack (backend :8000, frontend :3000)"
+	@echo "  prod         Start the production stack (docs/DEPLOYMENT.md)"
+	@echo "  down         Stop whichever stack is running (data volumes are kept)"
+	@echo "  install      Load the kernel module (root)"
+	@echo "  uninstall    Unload the kernel module (root)"
+	@echo "  status       Module and container status"
+	@echo "  logs         Recent module and container logs"
+	@echo "  clean        Remove build output (not containers' data)"
+	@echo "  attack-demo  Run every attack against KGuard in a VM, print pass/fail"
+	@echo "  lab          Victim and attacker VMs with KGuard and attack tools"
+	@echo "  bench        Packet-rate and CPU benchmarks in a VM (docs/BENCHMARKS.md)"
 
-# Setup development environment
 setup:
-	@echo "Setting up KGuard development environment..."
-	@echo "Checking prerequisites..."
-	@which docker > /dev/null || (echo "Docker is required" && exit 1)
-	@which docker-compose > /dev/null || (echo "Docker Compose is required" && exit 1)
-	@ls /lib/modules/$(shell uname -r)/build > /dev/null || (echo "Kernel headers are required: sudo apt install linux-headers-$(shell uname -r)" && exit 1)
-	@echo "Creating environment files..."
-	@cp backend/.env.example backend/.env 2>/dev/null || true
-	@cp frontend/.env.example frontend/.env 2>/dev/null || true
-	@echo "Setup complete!"
+	@command -v docker >/dev/null || { echo "Docker is required"; exit 1; }
+	@$(COMPOSE) version >/dev/null || { echo "Docker Compose v2 ('docker compose') is required"; exit 1; }
+	@test -d /lib/modules/$(shell uname -r)/build || \
+		{ echo "Kernel headers are required: sudo apt install linux-headers-$(shell uname -r)"; exit 1; }
+	@test -f .env || { cp .env.example .env; echo "Created .env: fill in the secrets it lists"; }
+	@test -f backend/.env || cp backend/.env.example backend/.env
+	@echo "Setup done"
 
-# Build all components
 build:
-	@echo "Building KGuard components..."
-	$(MAKE) -C kernel clean all
-	docker-compose build
+	$(MAKE) -C kernel
+	$(MAKE) -C kernel tools
+	$(MAKE) -C agent
+	$(COMPOSE) build
 
-# Clean build artifacts
-clean:
-	@echo "Cleaning build artifacts..."
-	$(MAKE) -C kernel clean
-	docker-compose down --volumes --remove-orphans
-	docker system prune -f
-
-# Run all tests
 test:
-	@echo "Running tests..."
-	$(MAKE) -C kernel test || true
-	docker-compose run --rm backend pytest
-	docker-compose run --rm frontend npm test
+	cd backend && python -m pytest
+	cd frontend && npm test
 
-# Start development environment
+test-kernel:
+	kernel/tests/run_in_vm.sh
+
 dev:
-	@echo "Starting development environment..."
-	docker-compose up -d
-	@echo "Services starting..."
-	@echo "Frontend: http://localhost:3000"
-	@echo "Backend API: http://localhost:8000"
-	@echo "API Docs: http://localhost:8000/docs"
+	$(COMPOSE) up -d --build
+	@echo "Frontend http://localhost:3000, API http://localhost:8000 (docs at /docs)"
 
-# Start production environment
 prod:
-	@echo "Starting production environment..."
-	docker-compose -f docker-compose.prod.yml up -d
-	@echo "Production services started"
+	$(COMPOSE) -f docker-compose.prod.yml up -d --build
+	@echo "Dashboard on port 80, Grafana on port 3001"
 
-# Install kernel module
+down:
+	-$(COMPOSE) down
+	-$(COMPOSE) -f docker-compose.prod.yml down
+
 install:
-	@echo "Installing KGuard kernel module..."
 	$(MAKE) -C kernel install
 
-# Uninstall kernel module
 uninstall:
-	@echo "Uninstalling KGuard kernel module..."
 	$(MAKE) -C kernel uninstall
 
-# View logs
-logs:
-	@echo "KGuard system logs:"
-	@echo "=== Kernel Module Logs ==="
-	$(MAKE) -C kernel logs
-	@echo ""
-	@echo "=== Docker Logs ==="
-	docker-compose logs --tail=50
-
-# Status check
 status:
-	@echo "KGuard system status:"
-	@echo "=== Kernel Module ==="
-	$(MAKE) -C kernel status
-	@echo ""
-	@echo "=== Docker Services ==="
-	docker-compose ps
+	@$(MAKE) -s -C kernel status
+	@$(COMPOSE) ps
+
+logs:
+	@$(MAKE) -s -C kernel logs
+	@$(COMPOSE) logs --tail=50
+
+clean:
+	$(MAKE) -C kernel clean
+	$(MAKE) -C agent clean
+
 # Real attacks against KGuard in a VM, each checked for its alert (roadmap P8.2)
 attack-demo:
 	scripts/attack_demo.sh

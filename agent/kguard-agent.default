@@ -1,0 +1,7 @@
+# Settings for the kguard-agent service (/etc/default/kguard-agent)
+# The backend's address (the token from "kguard-agent enroll" is in /var/lib/kguard-agent)
+KGUARD_SERVER=https://kguard.example.com
+# ebpf (no kernel module needed) or module (reads /dev/kguard)
+KGUARD_ENGINE=ebpf
+# Other options, e.g. --iface eth0 --xdp-native (agent/README.md)
+KGUARD_ARGS=

@@ -2,6 +2,7 @@
 # to the backend.
 #
 #   make            build build/kguard-agent
+#   make install    install it as a systemd service (root; see kguard-agent.service)
 #   make clean
 #
 # Needs: clang (BPF target), bpftool, libbpf-dev, libelf-dev, zlib1g-dev,
@@ -40,7 +41,16 @@ $(BUILD)/%.o: src/%.c src/agent.h $(BUILD)/kguard.skel.h | $(BUILD)
 $(BUILD)/kguard-agent: $(OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDLIBS)
 
+PREFIX ?= /usr/local
+install: $(BUILD)/kguard-agent
+	install -D -m 0755 $(BUILD)/kguard-agent $(DESTDIR)$(PREFIX)/bin/kguard-agent
+	install -D -m 0644 kguard-agent.service $(DESTDIR)/etc/systemd/system/kguard-agent.service
+	test -f $(DESTDIR)/etc/default/kguard-agent || \
+		install -D -m 0600 kguard-agent.default $(DESTDIR)/etc/default/kguard-agent
+	install -d -m 0700 $(DESTDIR)/var/lib/kguard-agent
+	-[ -z "$(DESTDIR)" ] && systemctl daemon-reload
+
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all clean
+.PHONY: all clean install
