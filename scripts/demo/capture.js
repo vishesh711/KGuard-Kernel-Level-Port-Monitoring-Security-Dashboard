@@ -22,7 +22,7 @@ function attack(cmd) {
     console.log('frame', n, name);
   };
 
-  await page.goto(`${BASE}/login`);
+  await page.goto(`${BASE}/`);  // the sign-in form shows at any address
   await page.fill('#username', USERNAME);
   await page.fill('#password', PASSWORD);
   await shot('login');
@@ -41,7 +41,8 @@ function attack(cmd) {
   await page.waitForTimeout(2000);
   await shot('xmas-scan');
 
-  attack(`timeout 4 hping3 -S --flood --rand-source -p 8080 ${TARGET}`);
+  // timeout ends the flood and then exits 124, which is expected
+  attack(`sh -c "timeout 4 hping3 -S --flood --rand-source -p 8080 ${TARGET}; true"`);
   await page.waitForSelector('text=/SYN Flood/', { timeout: WAIT });
   await page.waitForTimeout(2000);
   await shot('syn-flood');

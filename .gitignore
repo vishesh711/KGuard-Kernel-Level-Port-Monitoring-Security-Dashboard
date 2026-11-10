@@ -121,3 +121,6 @@ crash-*
 docs/bench/kguard-bench-*.log
 docs/bench-smoke/
 .tmp_mmap.*
+
+# Raw frames from scripts/demo/make_demo.sh (only demo.gif is committed)
+docs/images/demo-frames/

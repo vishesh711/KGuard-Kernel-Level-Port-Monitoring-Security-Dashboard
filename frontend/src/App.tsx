@@ -1,4 +1,4 @@
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import { Layout } from './components/layout/Layout'
 import { LiveUpdatesProvider } from './context/LiveUpdates'
 import { useAuth } from './context/auth'
@@ -30,6 +30,8 @@ function App() {
           <Route path="/blocks" element={<Blocks />} />
           <Route path="/processes" element={<Processes />} />
           <Route path="/settings" element={<Settings />} />
+          {/* Unknown addresses (an old bookmark, /login after signing in) go to the dashboard */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Layout>
     </LiveUpdatesProvider>

@@ -25,8 +25,9 @@ CMD ["npm", "run", "dev", "--", "--host"]
 # Build stage
 FROM base AS build
 
-# All dependencies: the build needs the dev tools (TypeScript, Vite)
-RUN npm ci
+# All dependencies: the build needs the dev tools (TypeScript, Vite). npm can
+# crash on a flaky network and still exit 0, so check that they are there.
+RUN npm ci && test -x node_modules/.bin/tsc && test -x node_modules/.bin/vite
 
 # Copy source code
 COPY . .

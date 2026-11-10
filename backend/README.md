@@ -88,8 +88,8 @@ lines are printed before the JSON logging is set up.)
 
 Every endpoint, with who may call it, is in [docs/API.md](../docs/API.md)
 (generated from the code: `python -m app.apidoc > ../docs/API.md`; a test
-fails when it is out of date). On a running backend the interactive version
-is at `/docs` (Swagger UI) and `/redoc`.
+fails when it is out of date). With `DEBUG=true` the backend also serves an
+interactive version at `/docs` (Swagger UI) and `/redoc`.
 
 ## Configuration
 
