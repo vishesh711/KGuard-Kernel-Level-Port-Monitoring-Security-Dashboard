@@ -120,3 +120,4 @@ crash-*
 # Benchmark scratch
 docs/bench/kguard-bench-*.log
 docs/bench-smoke/
+.tmp_mmap.*
