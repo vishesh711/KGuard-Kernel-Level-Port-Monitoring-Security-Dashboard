@@ -22,7 +22,7 @@
 #include <stdint.h>
 #include <linux/kguard.h>
 
-#define AGENT_VERSION "1.0.0"
+#define AGENT_VERSION "2.0.0"
 
 struct agent_config {
 	const char *engine;		/* "module" or "ebpf" */

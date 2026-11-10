@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from .. import __version__
 from ..config import settings
 from ..database import check_db_connection, get_db
 from ..schemas.common import HealthCheck
@@ -64,7 +65,7 @@ async def health_check(db: Session = Depends(get_db)):
         return HealthCheck(
             status=status,
             timestamp=datetime.utcnow(),
-            version="1.0.0",
+            version=__version__,
             database=db_healthy,
             kernel_module=kernel_healthy,
             uptime_seconds=uptime_seconds
