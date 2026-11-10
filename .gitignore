@@ -111,3 +111,11 @@ kernel/tests/out/
 agent/build/
 kernel/sparse.log
 kernel/tests/selftests/kguard_test
+# Fuzzing: binaries and corpus entries the fuzzers add (seeds are kept)
+kernel/tests/fuzz/tcp_options_fuzz
+kernel/tests/fuzz/corpus/[0-9a-f][0-9a-f][0-9a-f][0-9a-f]*
+kernel/tests/fuzz/crash-*
+backend/fuzz/corpus/
+crash-*
+# Benchmark scratch
+docs/bench/run.log

@@ -20,6 +20,7 @@
  */
 
 #include "kguard.h"
+#include "kguard_parse.h"
 
 #include <linux/cred.h>
 #include <linux/ip.h>
@@ -121,47 +122,23 @@ static int kguard_parse_ipv6(struct sk_buff *skb, struct kguard_event *ev)
 	return offset;
 }
 
-/*
- * Record the TCP options of a SYN: their order, MSS and window scale. The
- * order and values identify the sender's operating system (p0f-style).
- */
+/* Copy a SYN's options out of the packet and walk them (kguard_parse.h) */
 static void kguard_parse_tcp_options(const struct sk_buff *skb, int offset,
 				     const struct tcphdr *th, struct kguard_event *ev)
 {
-	u8 buf[MAX_TCP_OPTION_SPACE];
-	unsigned int len = th->doff * 4 - sizeof(*th);
+	u8 buf[KGUARD_OPT_SPACE];
+	unsigned int len;
 	const u8 *opt;
-	unsigned int i = 0;
 
 	ev->tcp_wscale = 0xff;
-	if (th->doff * 4 < sizeof(*th) || !len || len > sizeof(buf))
+	if (th->doff * 4 < sizeof(*th))
+		return;
+	len = th->doff * 4 - sizeof(*th);
+	if (!len || len > sizeof(buf))
 		return;
 	opt = skb_header_pointer(skb, offset + sizeof(*th), len, buf);
-	if (!opt)
-		return;
-
-	while (i < len && ev->tcp_opts_len < KGUARD_TCP_MAX_OPTS) {
-		u8 kind = opt[i];
-		u8 size;
-
-		ev->tcp_opts[ev->tcp_opts_len++] = kind;
-		if (kind == TCPOPT_EOL)
-			break;
-		if (kind == TCPOPT_NOP) {
-			i++;
-			continue;
-		}
-		if (i + 1 >= len)
-			break;
-		size = opt[i + 1];
-		if (size < 2 || i + size > len)
-			break;	/* malformed: keep what we have */
-		if (kind == TCPOPT_MSS && size == TCPOLEN_MSS)
-			ev->tcp_mss = (opt[i + 2] << 8) | opt[i + 3];
-		else if (kind == TCPOPT_WINDOW && size == TCPOLEN_WINDOW)
-			ev->tcp_wscale = opt[i + 2];
-		i += size;
-	}
+	if (opt)
+		kguard_parse_tcp_opts(opt, len, ev);
 }
 
 /* Copy ports and TCP flags out of possibly non-linear packet data */

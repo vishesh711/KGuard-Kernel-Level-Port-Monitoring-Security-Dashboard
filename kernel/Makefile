@@ -38,7 +38,8 @@ checkpatch:
 # sparse (make C=2): type, address-space and endianness checks on every
 # source file. Fails on any warning (sparse itself never fails the build).
 sparse:
-	$(MAKE) -C $(KDIR) M=$(PWD) C=2 modules 2>&1 | tee sparse.log
+	@$(MAKE) -C $(KDIR) M=$(PWD) C=2 modules > sparse.log 2>&1; status=$$?; cat sparse.log; \
+		if [ $$status -ne 0 ]; then echo "sparse: the build failed"; exit $$status; fi
 	@if grep -E "^[^ ]+\.[ch]:[0-9]+:[0-9]+: (warning|error):" sparse.log; then exit 1; fi
 	@echo "sparse: no warnings"
 
@@ -47,6 +48,12 @@ sparse:
 selftest: tests/selftests/kguard_test
 tests/selftests/kguard_test: tests/selftests/kguard_test.c include/uapi/linux/kguard.h
 	$(CC) -O2 -Wall -Wextra -Werror -Iinclude/uapi -o $@ $<
+
+# libFuzzer harness for the shared TCP options parser (ASan + UBSan)
+fuzz: tests/fuzz/tcp_options_fuzz
+tests/fuzz/tcp_options_fuzz: tests/fuzz/tcp_options_fuzz.c src/kguard_parse.h include/uapi/linux/kguard.h
+	clang -g -O1 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all \
+		-Iinclude -Iinclude/uapi -Isrc -o $@ $<
 
 # User-space tools: the zero-copy mmap reader (kguardctl.py needs no build)
 tools: tools/kguard_reader
@@ -86,4 +93,4 @@ help:
 	@echo "  logs      - View recent kernel logs for KGuard"
 	@echo "  help      - Show this help message"
 
-.PHONY: all clean checkpatch sparse selftest tools install uninstall status logs help
+.PHONY: all clean checkpatch sparse selftest fuzz tools install uninstall status logs help

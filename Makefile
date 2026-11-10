@@ -1,6 +1,6 @@
 # KGuard Project Makefile
 
-.PHONY: help setup build clean test install uninstall dev prod logs
+.PHONY: help setup build clean test install uninstall dev prod logs attack-demo lab bench
 
 # Default target
 help:
@@ -16,6 +16,9 @@ help:
 	@echo "  install   - Install kernel module (requires root)"
 	@echo "  uninstall - Uninstall kernel module (requires root)"
 	@echo "  logs      - View system logs"
+	@echo "  attack-demo - Run every attack against KGuard in a VM, print pass/fail"
+	@echo "  bench     - Packet-rate and CPU benchmarks in a VM (docs/BENCHMARKS.md)"
+	@echo "  lab       - Victim and attacker VMs with KGuard and attack tools"
 	@echo "  help      - Show this help message"
 
 # Setup development environment
@@ -92,3 +95,9 @@ status:
 	@echo ""
 	@echo "=== Docker Services ==="
 	docker-compose ps
+# Real attacks against KGuard in a VM, each checked for its alert (roadmap P8.2)
+attack-demo:
+	scripts/attack_demo.sh
+
+bench:
+	scripts/bench_vm.sh --flame

@@ -406,6 +406,7 @@ def main():
         for test in tests:
             if only != [""] and test.__name__.removeprefix("test_") not in only:
                 continue
+            print(f"== {test.__name__.removeprefix('test_')}", flush=True)
             try:
                 test()
             except Exception as e:
