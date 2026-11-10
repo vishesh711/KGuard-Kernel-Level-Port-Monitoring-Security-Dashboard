@@ -85,15 +85,19 @@ install: all
 
 # Permanent install with DKMS (root): rebuilt for every new kernel, loaded at
 # boot. Module options (e.g. reader_gid=1500) go in /etc/modprobe.d/kguard.conf.
-VERSION := $(shell sed -n 's/^\#define KGUARD_MODULE_VERSION[[:space:]]*"\(.*\)"/\1/p' src/kguard.h)
-DKMS_SRC := /usr/src/kguard-$(VERSION)
+# Not named VERSION: kbuild reads this file too, and the kernel's own
+# Makefile uses VERSION. Only needed outside kbuild.
+ifeq ($(KERNELRELEASE),)
+KGUARD_VERSION := $(shell sed -n 's/^\#define KGUARD_MODULE_VERSION[[:space:]]*"\(.*\)"/\1/p' src/kguard.h)
+endif
+DKMS_SRC := /usr/src/kguard-$(KGUARD_VERSION)
 dkms-install:
-	@test -n "$(VERSION)" || { echo "no KGUARD_MODULE_VERSION in src/kguard.h"; exit 1; }
+	@test -n "$(KGUARD_VERSION)" || { echo "no KGUARD_MODULE_VERSION in src/kguard.h"; exit 1; }
 	sudo rm -rf $(DKMS_SRC)
 	sudo mkdir -p $(DKMS_SRC)
 	sudo cp -r Makefile src include $(DKMS_SRC)/
-	sed 's/@VERSION@/$(VERSION)/' dkms.conf | sudo tee $(DKMS_SRC)/dkms.conf >/dev/null
-	sudo dkms install kguard/$(VERSION)
+	sed 's/@VERSION@/$(KGUARD_VERSION)/' dkms.conf | sudo tee $(DKMS_SRC)/dkms.conf >/dev/null
+	sudo dkms install kguard/$(KGUARD_VERSION)
 	echo kguard | sudo tee /etc/modules-load.d/kguard.conf >/dev/null
 	test -f /etc/modprobe.d/kguard.conf || \
 		echo "options kguard reader_gid=1500" | sudo tee /etc/modprobe.d/kguard.conf >/dev/null
@@ -101,7 +105,7 @@ dkms-install:
 
 dkms-uninstall:
 	-sudo modprobe -r kguard
-	-sudo dkms remove kguard/$(VERSION) --all
+	-sudo dkms remove kguard/$(KGUARD_VERSION) --all
 	sudo rm -rf $(DKMS_SRC) /etc/modules-load.d/kguard.conf
 
 # Uninstall target (requires root)
