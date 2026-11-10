@@ -252,9 +252,9 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
 
 ## Phase 8 — Proof: benchmarks, attack demos, kernel testing
 
-- [ ] **P8.1 Test lab.**
-  *Progress:* `kernel/tests/run_in_vm.sh` boots a throwaway virtme-ng VM and runs the 33-check kernel suite (`kernel/tests/vm_tests.py`); `scripts/e2e_smoke.sh` runs the full stack. Attacker VM still to do. Vagrant or `virtme-ng` setup: one victim VM running KGuard, one attacker VM with nmap, hping3, hydra, scapy, iodine.
+- [x] **P8.1 Test lab.** Vagrant or `virtme-ng` setup: one victim VM running KGuard, one attacker VM with nmap, hping3, hydra, scapy, iodine.
   *Done when:* `make lab` brings both up.
+  *Status:* Done. `make lab` (`scripts/lab.sh`, `scripts/lab_node.py`) boots two virtme-ng VMs joined by a private QEMU socket link: the victim (10.77.0.1) loads the module and runs the backend on :8000, sshd and a web server; the attacker (10.77.0.2) has the attack tools and a root shell. `LAB_CHECK=1 make lab` is the non-interactive check: the attacker logs in to the victim's API across the link, runs `nmap -sS`, and waits for the victim to report it. Run here: exit 0, "SYN Scan Detected from 10.77.0.2" (kernel alert) on the victim. The interactive shell mode was not exercised (no terminal in this environment). Both VMs run the host's root filesystem, so the tools must be installed on the host.
 - [x] **P8.2 Attack demo scripts.** One script per attack in Phase 5, each checking that the expected alert appears.
   *Done when:* `make attack-demo` runs all of them and prints pass/fail.
   *Status:* Done. `scripts/attacks/<attack>.sh` (scans, brute_force, syn_flood, os_fingerprint, spoofing, amplification, dns_tunnel, tls) each run one attack with real tools (nmap, hydra, hping3, scapy, iodine, openssl) in a VM; `make attack-demo` runs all eight and prints a PASS/FAIL line each. Run on the 6.8 kernel (emulated VM): 8/8 PASS, 35 checks (detection lab 21/21, payload lab 14/14).

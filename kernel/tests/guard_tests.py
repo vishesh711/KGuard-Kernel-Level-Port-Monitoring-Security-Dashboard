@@ -279,7 +279,14 @@ for i in range({count}):
     src = struct.pack("!I", (10 << 24) + (64 << 16) + i + 1)
     udp = struct.pack("!HHHH", 30000, 9999, 9, 0) + b"x"
     ip = struct.pack("!BBHHHBBH4s4s", 0x45, 0, 20 + len(udp), 0, 0, 64, 17, 0, src, dst)
-    raw.sendto(ip + udp, ("{HOST4}", 0))
+    while True:
+        try:
+            raw.sendto(ip + udp, ("{HOST4}", 0))
+            break
+        except OSError as e:  # ENOBUFS: the queue is full (fast, KVM-backed VMs); wait for room
+            if e.errno != 105:
+                raise
+            time.sleep(0.001)
 """
     in_ns([sys.executable, "-c", code], check=True)
 

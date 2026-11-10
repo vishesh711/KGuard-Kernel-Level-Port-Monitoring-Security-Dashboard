@@ -106,7 +106,7 @@ class KernelAlertService:
         self.module_path = Path(settings.kguard_module_path)
         self.sock: Optional[KGuardEventSocket] = None
         self.loop: Optional[asyncio.AbstractEventLoop] = None
-        self._last_attempt = 0.0
+        self._last_attempt = float("-inf")  # monotonic() counts from boot: 0.0 would delay the first try
         # source IP -> (monotonic expiry, event_type) for marking new events
         self._flagged: Dict[str, tuple] = {}
         self.stats = {"alerts_received": 0, "alerts_stored": 0}

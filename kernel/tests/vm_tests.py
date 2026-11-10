@@ -35,6 +35,7 @@ DEBUGFS = "/sys/kernel/debug/kguard"
 TRACEFS = "/sys/kernel/tracing"
 
 results = []
+DMESG_START = 0  # kernel log lines before the suite started
 
 
 def check(name, ok, detail=""):
@@ -513,15 +514,19 @@ def test_reader_group():
 
 def test_clean_unload():
     unload()
-    log = sh("dmesg")
+    # Only what the kernel logged during the suite: boot messages (e.g. a CPU
+    # vulnerability "WARNING" on some hosts) are not the module's doing
+    log = "\n".join(sh("dmesg").splitlines()[DMESG_START:])
     pattern = re.compile(r"WARNING|BUG|Oops|general protection|lockdep|refcount")
     bad = [line for line in log.splitlines() if pattern.search(line)]
     check("module unloads with no kernel warnings", not bad, bad[0] if bad else "")
 
 
 def main():
+    global DMESG_START
     if os.geteuid():
         raise SystemExit("run as root")
+    DMESG_START = len(sh("dmesg").splitlines())
     if not os.path.exists("/sys/kernel/debug/kguard") and not os.path.ismount("/sys/kernel/debug"):
         sh("mount -t debugfs none /sys/kernel/debug", check_rc=False)
     if not os.path.exists(f"{TRACEFS}/events"):

@@ -149,8 +149,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y qemu-system-x86 "linux-headers-$(uname -r)" iproute2 \
-            netcat-openbsd curl busybox-static
+            netcat-openbsd curl busybox-static nmap python3-scapy
           sudo pip install --break-system-packages virtme-ng
+          # The suite checks that a non-root user is refused; that user must be able to read the checkout
+          sudo chmod o+x /home/runner
           sudo chmod 0644 "/boot/vmlinuz-$(uname -r)"
       - name: Selftests (TAP)
         run: sudo env "PATH=$PATH" kernel/tests/selftests/run_in_vm.sh "/boot/vmlinuz-$(uname -r)"
