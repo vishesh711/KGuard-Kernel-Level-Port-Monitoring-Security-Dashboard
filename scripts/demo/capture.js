@@ -41,12 +41,6 @@ function attack(cmd) {
   await page.waitForTimeout(2000);
   await shot('xmas-scan');
 
-  // timeout ends the flood and then exits 124, which is expected
-  attack(`sh -c "timeout 4 hping3 -S --flood --rand-source -p 8080 ${TARGET}; true"`);
-  await page.waitForSelector('text=/SYN Flood/', { timeout: WAIT });
-  await page.waitForTimeout(2000);
-  await shot('syn-flood');
-
   await page.click('a[href="/alerts"]');
   await page.waitForSelector('text=/SYN Scan Detected/', { timeout: WAIT });
   await page.waitForTimeout(2000);
@@ -60,6 +54,16 @@ function attack(cmd) {
   await page.click('a[href="/hosts"]');
   await page.waitForTimeout(5000);
   await shot('hosts');
+
+  // The flood comes last: thousands of live events at once can crash an
+  // emulated VM's browser.
+  await page.click('a[href="/"]');
+  await page.waitForSelector('text=Live updates on', { timeout: WAIT });
+  // timeout ends the flood and then exits 124, which is expected
+  attack(`sh -c "timeout 4 hping3 -S --flood --rand-source -p 8080 ${TARGET}; true"`);
+  await page.waitForSelector('text=/SYN Flood/', { timeout: WAIT });
+  await page.waitForTimeout(2000);
+  await shot('syn-flood');
 
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });

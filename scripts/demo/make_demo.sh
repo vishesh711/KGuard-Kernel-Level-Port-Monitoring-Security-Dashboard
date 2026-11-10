@@ -25,3 +25,7 @@ timeout "${VM_TIMEOUT:-3600}" vng "${args[@]}" --exec \
     "cd '$ROOT' && python3 scripts/demo/capture.py '$BACKEND_PY' '$DIST' '$FRAMES' > '$FRAMES/capture.log' 2>&1"
 cat "$FRAMES/capture.log"
 "${PYTHON:-python3}" scripts/demo/frames_to_gif.py "$FRAMES" docs/images/demo.gif
+if grep -q '^capture.js exit [1-9]' "$FRAMES/capture.log"; then
+    echo "capture did not finish: the GIF has only the frames above" >&2
+    exit 1
+fi
