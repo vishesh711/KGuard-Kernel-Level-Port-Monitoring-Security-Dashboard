@@ -84,26 +84,12 @@ detection state in memory, so several workers would each see part of the
 traffic. (`uvicorn app.main:app` also works, but its first few start-up
 lines are printed before the JSON logging is set up.)
 
-## API Documentation
+## API
 
-Once running, visit:
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
-
-## API Endpoints
-
-### Events
-- `GET /api/events` - List network events with pagination
-- `GET /api/events/stats` - Traffic statistics
-- `GET /api/events/{id}` - Get specific event
-
-### Alerts
-- `GET /api/alerts` - List security alerts
-- `POST /api/alerts/{id}/acknowledge` - Acknowledge alert
-
-### System
-- `GET /api/health` - Health check
-- `WebSocket /ws` - Real-time event stream
+Every endpoint, with who may call it, is in [docs/API.md](../docs/API.md)
+(generated from the code: `python -m app.apidoc > ../docs/API.md`; a test
+fails when it is out of date). On a running backend the interactive version
+is at `/docs` (Swagger UI) and `/redoc`.
 
 ## Configuration
 

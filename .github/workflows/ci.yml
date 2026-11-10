@@ -126,6 +126,20 @@ jobs:
         run: |
           sudo apt-get install -y sparse
           make -C kernel sparse
+      - name: Cache smatch
+        uses: actions/cache@v4
+        with:
+          path: ~/smatch
+          key: smatch-5189e3fb018b783a26dcb45c02c114c1d1aad290-${{ runner.os }}
+      - name: Static analysis (smatch, warnings fail)
+        run: |
+          if [ ! -x ~/smatch/smatch ]; then
+            sudo apt-get install -y libsqlite3-dev libssl-dev
+            git clone https://github.com/error27/smatch.git ~/smatch
+            git -C ~/smatch checkout 5189e3fb018b783a26dcb45c02c114c1d1aad290
+            make -C ~/smatch -j"$(nproc)" smatch
+          fi
+          make -C kernel smatch SMATCH=$HOME/smatch/smatch
       - name: User-space tools
         run: make -C kernel tools
       - name: Lint Python tools, tests and lab scripts (ruff)
@@ -158,6 +172,34 @@ jobs:
         run: sudo env "PATH=$PATH" kernel/tests/selftests/run_in_vm.sh "/boot/vmlinuz-$(uname -r)"
       - name: Kernel suite
         run: sudo env "PATH=$PATH" kernel/tests/run_in_vm.sh "/boot/vmlinuz-$(uname -r)"
+
+  kernel-matrix:
+    # Roadmap P8.5: the module built against, and tested on, each LTS kernel and
+    # the latest stable (Ubuntu mainline builds from kernel.ubuntu.com) in a VM
+    name: Kernel ${{ matrix.series }} in a VM
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        series: ["5.15", "6.1", "6.6", "6.12", "latest"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Let the runner user use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | \
+            sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install QEMU, virtme-ng and the test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 iproute2 netcat-openbsd curl busybox-static \
+            nmap python3-scapy
+          sudo pip install --break-system-packages virtme-ng
+          sudo chmod o+x /home/runner
+      - name: Build and test on ${{ matrix.series }}
+        run: sudo env "PATH=$PATH" KERNEL_CACHE=/tmp/kernels kernel/tests/kernel_matrix.sh "${{ matrix.series }}"
 
   agent:
     name: Agent (eBPF + C)

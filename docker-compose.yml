@@ -26,14 +26,9 @@ services:
     # the same group: sudo insmod kernel/kguard.ko reader_gid=1500
     group_add:
       - "${KGUARD_READER_GID:-1500}"
-    # Zero-copy event stream. Uncomment once the module is loaded (Docker
-    # refuses to start if the device is missing); without it the backend
-    # reads /proc/kguard instead.
-    # devices:
-    #   - /dev/kguard:/dev/kguard
-    # To name the process behind each connection, the backend must see the
-    # host's processes:
-    # pid: host
+    # With the module loaded, add docker-compose.kernel.yml to give the backend
+    # /dev/kguard (zero-copy events) and the host's processes (process names);
+    # without it the backend reads /proc/kguard. See docs/DEPLOYMENT.md.
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health/', timeout=5)"]

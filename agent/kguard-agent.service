@@ -1,0 +1,26 @@
+# kguard-agent as a service (installed by: sudo make -C agent install).
+# Enroll once first:
+#   sudo kguard-agent enroll --server https://kguard.example.com --key KEY --name $(hostname)
+# then set the server and engine in /etc/default/kguard-agent and:
+#   sudo systemctl enable --now kguard-agent
+[Unit]
+Description=KGuard agent: kernel network events to the KGuard backend
+Documentation=https://github.com/vishesh711/KGuard-Kernel-Level-Port-Monitoring-Security-Dashboard/blob/main/agent/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/default/kguard-agent
+ExecStart=/usr/local/bin/kguard-agent run --engine ${KGUARD_ENGINE} --server ${KGUARD_SERVER} $KGUARD_ARGS
+Restart=on-failure
+RestartSec=5
+# Needs root: it loads eBPF programs or reads /dev/kguard, and changes the
+# blocklist. Keep the rest of the system out of reach.
+ProtectHome=yes
+ProtectSystem=full
+ReadWritePaths=/var/lib/kguard-agent /sys/fs/bpf
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

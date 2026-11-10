@@ -1,0 +1,12 @@
+# Give the backend the kernel module's event device and the host's processes.
+# Use it on a host where the module is loaded (docs/DEPLOYMENT.md):
+#   docker compose -f docker-compose.prod.yml -f docker-compose.kernel.yml up -d
+# (Docker refuses to start the backend if /dev/kguard does not exist.)
+services:
+  backend:
+    # Zero-copy event stream; "rw" because the reader writes its own read
+    # position into the shared ring header, which has no other effect
+    devices:
+      - /dev/kguard:/dev/kguard:rw
+    # Lets the backend name the process behind each connection
+    pid: host

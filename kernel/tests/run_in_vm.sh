@@ -28,7 +28,7 @@ if [[ -n "$KERNEL_IMAGE" ]]; then
     KVER=$(basename "$KERNEL_IMAGE" | sed 's/^vmlinuz-//')
     : "${KDIR:=/lib/modules/$KVER/build}"
 fi
-make ${KDIR:+KDIR="$KDIR"} >/dev/null
+make ${KDIR:+KDIR="$KDIR"} ${CC:+CC="$CC"} >/dev/null
 make tools >/dev/null
 
 args=(--cpus 4 --memory 2G --rwdir "$OUT")

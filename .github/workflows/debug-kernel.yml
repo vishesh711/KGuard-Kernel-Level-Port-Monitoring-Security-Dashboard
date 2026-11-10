@@ -1,0 +1,65 @@
+name: Debug kernels
+
+# Roadmap P8.3: the kernel suite on kernels built with the kernel's own bug
+# detectors, and the job fails on any report. Two builds, since KASAN and
+# KCSAN cannot be in one kernel:
+#   kcsan  lockdep + KCSAN (data races) + kmemleak       tests/debug.config
+#   kasan  KASAN + UBSAN + lockdep + kmemleak + SLUB debug   tests/debug-kasan.config
+# Building each kernel takes a while, so this runs when the module or its
+# tests change, weekly, and on demand.
+
+on:
+  push:
+    paths:
+      - "kernel/**"
+      - ".github/workflows/debug-kernel.yml"
+  schedule:
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+
+env:
+  # A long-term kernel the module is tested on in CI's kernel matrix
+  LINUX_VERSION: "6.12.116"
+
+jobs:
+  debug-kernel:
+    name: Kernel suite on a ${{ matrix.flavor }} kernel
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [kcsan, kasan]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Let the runner user use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | \
+            sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install the kernel build tools, QEMU, virtme-ng and the test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential flex bison bc cpio libelf-dev libssl-dev dwarves \
+            qemu-system-x86 iproute2 netcat-openbsd curl busybox-static nmap python3-scapy
+          sudo pip install --break-system-packages virtme-ng
+          sudo chmod o+x /home/runner
+      - name: Fetch Linux ${{ env.LINUX_VERSION }} from kernel.org (checksum verified)
+        run: |
+          base=https://cdn.kernel.org/pub/linux/kernel/v${LINUX_VERSION%%.*}.x
+          curl -fsSL --retry 3 -O "$base/linux-$LINUX_VERSION.tar.xz"
+          curl -fsSL --retry 3 -o sha256sums "$base/sha256sums.asc"
+          grep " linux-$LINUX_VERSION.tar.xz\$" sha256sums | sha256sum -c -
+          tar xJf "linux-$LINUX_VERSION.tar.xz"
+      - name: Build the ${{ matrix.flavor }} kernel and run the suite on it
+        run: |
+          sudo env "PATH=$PATH" DEBUG_FLAVOR=${{ matrix.flavor }} \
+            kernel/tests/debug_kernel.sh "$PWD/linux-$LINUX_VERSION"
+      - name: Keep the full log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-kernel-${{ matrix.flavor }}-log
+          path: /tmp/kguard-debug-*/log
+          if-no-files-found: warn

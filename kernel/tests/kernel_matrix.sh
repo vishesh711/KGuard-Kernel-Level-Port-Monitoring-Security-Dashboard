@@ -11,6 +11,7 @@
 #   default versions: the LTS series 5.15, 6.1, 6.6, 6.12 and the latest
 #   stable, each at its newest point release.
 #   KERNEL_CACHE=dir   where packages are kept (default ~/.cache/kguard-kernels)
+#   BUILD_ONLY=1       build against each kernel, boot nothing
 #
 # Needs root (it links each kernel's modules into /lib/modules for the VM),
 # curl, dpkg-deb, virtme-ng and qemu. Uses KVM when /dev/kvm exists.
@@ -18,6 +19,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+mkdir -p tests/out
 MAINLINE=https://kernel.ubuntu.com/mainline
 CACHE="${KERNEL_CACHE:-$HOME/.cache/kguard-kernels}"
 SERIES=("$@")
@@ -69,14 +71,31 @@ for series in "${SERIES[@]}"; do
     ln -sfn "$root/lib/modules/$kver" "/lib/modules/$kver"
     kdir="$root/usr/src/linux-headers-$kver"
 
-    make clean >/dev/null
-    if ! make KDIR="$kdir" > "tests/out/build-$version.log" 2>&1; then
+    # Build with the kernel's own compiler when installed, else the newest gcc here
+    # (mainline builds of recent kernels use a gcc newer than this distribution has)
+    kcc=$(sed -n 's/^CONFIG_CC_VERSION_TEXT="\(x86_64-linux-gnu-\)\{0,1\}\(gcc[-0-9]*\) .*/\2/p' "$kdir/.config")
+    if ! command -v "${kcc:-gcc}" >/dev/null; then
+        newest=$(compgen -c gcc- | grep -E '^gcc-[0-9]+$' | sort -t- -k2 -n | tail -1)
+        echo "  $kcc is not installed: building with ${newest:-gcc} instead"
+        kcc=${newest:-gcc}
+        # The kernel's config enables attributes (counted_by) only its own compiler knows;
+        # an older one warns about them in the kernel's headers. Keep those as warnings.
+        export KCFLAGS="-Wno-error=attributes"
+    else
+        unset KCFLAGS
+    fi
+    make KDIR="$kdir" clean >/dev/null
+    if ! make KDIR="$kdir" CC="$kcc" > "tests/out/build-$version.log" 2>&1; then
         echo "build failed:"; grep -E "error|warning" "tests/out/build-$version.log" | head -20
         results+=("$version  BUILD FAILED")
         status=1
         continue
     fi
-    if out=$(KDIR="$kdir" tests/run_in_vm.sh "$image" 2>&1); then
+    if [[ -n "${BUILD_ONLY:-}" ]]; then
+        results+=("$version  builds")
+        continue
+    fi
+    if out=$(KDIR="$kdir" CC="$kcc" tests/run_in_vm.sh "$image" 2>&1); then
         results+=("$version  $(tail -1 <<<"$out")")
     else
         echo "$out" | grep -E '^FAIL|did not finish' | head -20

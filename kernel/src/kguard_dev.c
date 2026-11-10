@@ -12,6 +12,7 @@
  */
 
 #include "kguard.h"
+#include "kguard_compat.h"
 
 #include <linux/cred.h>
 #include <linux/fs.h>
@@ -61,7 +62,7 @@ static int kguard_dev_mmap(struct file *file, struct vm_area_struct *vma)
 		return -EINVAL;
 	if (vma->vm_flags & VM_EXEC)
 		return -EPERM;
-	vm_flags_clear(vma, VM_MAYEXEC);
+	kguard_vm_flags_clear(vma, VM_MAYEXEC);
 
 	return remap_vmalloc_range(vma, kguard_ring_area(), vma->vm_pgoff);
 }

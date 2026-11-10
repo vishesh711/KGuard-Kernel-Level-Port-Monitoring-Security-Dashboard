@@ -14,6 +14,7 @@
  */
 
 #include "kguard.h"
+#include "kguard_compat.h"
 
 #include <linux/mutex.h>
 #include <net/genetlink.h>
@@ -378,8 +379,10 @@ static struct genl_family kguard_genl_family __ro_after_init = {
 	.module		= THIS_MODULE,
 	.small_ops	= kguard_genl_ops,
 	.n_small_ops	= ARRAY_SIZE(kguard_genl_ops),
+#if KGUARD_HAVE_RESV_START_OP
 	/* Commands from ALERT on get strict attribute validation */
 	.resv_start_op	= KGUARD_CMD_CONFIG_CHANGED + 1,
+#endif
 	.mcgrps		= kguard_mcgrps,
 	.n_mcgrps	= ARRAY_SIZE(kguard_mcgrps),
 };
