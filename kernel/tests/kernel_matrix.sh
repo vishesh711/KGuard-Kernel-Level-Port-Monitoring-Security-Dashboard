@@ -19,6 +19,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+mkdir -p tests/out
 MAINLINE=https://kernel.ubuntu.com/mainline
 CACHE="${KERNEL_CACHE:-$HOME/.cache/kguard-kernels}"
 SERIES=("$@")
