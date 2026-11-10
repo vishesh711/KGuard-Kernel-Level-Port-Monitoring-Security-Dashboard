@@ -131,6 +131,32 @@ jobs:
       - name: Lint Python tools, tests and lab scripts (ruff)
         run: pipx run ruff check kernel/tools kernel/tests scripts --config kernel/ruff.toml
 
+  kernel-vm:
+    # Boots the runner's own kernel in a VM (virtme-ng, KVM) and runs the
+    # module's kselftest-style tests (TAP) and the full kernel suite there
+    name: Kernel module in a VM (selftests + suite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Let the runner user use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | \
+            sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install QEMU, virtme-ng and kernel headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 "linux-headers-$(uname -r)" iproute2 \
+            netcat-openbsd curl busybox-static
+          sudo pip install --break-system-packages virtme-ng
+          sudo chmod 0644 "/boot/vmlinuz-$(uname -r)"
+      - name: Selftests (TAP)
+        run: sudo env "PATH=$PATH" kernel/tests/selftests/run_in_vm.sh "/boot/vmlinuz-$(uname -r)"
+      - name: Kernel suite
+        run: sudo env "PATH=$PATH" kernel/tests/run_in_vm.sh "/boot/vmlinuz-$(uname -r)"
+
   agent:
     name: Agent (eBPF + C)
     runs-on: ubuntu-latest

@@ -42,6 +42,12 @@ sparse:
 	@if grep -E "^[^ ]+\.[ch]:[0-9]+:[0-9]+: (warning|error):" sparse.log; then exit 1; fi
 	@echo "sparse: no warnings"
 
+# kselftest-style tests (TAP): device, Netlink commands, blocking. Run as
+# root with the module loaded: tests/selftests/kguard_test
+selftest: tests/selftests/kguard_test
+tests/selftests/kguard_test: tests/selftests/kguard_test.c include/uapi/linux/kguard.h
+	$(CC) -O2 -Wall -Wextra -Werror -Iinclude/uapi -o $@ $<
+
 # User-space tools: the zero-copy mmap reader (kguardctl.py needs no build)
 tools: tools/kguard_reader
 tools/kguard_reader: tools/kguard_reader.c include/uapi/linux/kguard.h
@@ -80,4 +86,4 @@ help:
 	@echo "  logs      - View recent kernel logs for KGuard"
 	@echo "  help      - Show this help message"
 
-.PHONY: all clean checkpatch tools install uninstall status logs help
+.PHONY: all clean checkpatch sparse selftest tools install uninstall status logs help

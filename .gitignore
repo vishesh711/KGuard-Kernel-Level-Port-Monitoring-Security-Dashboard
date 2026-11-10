@@ -110,3 +110,4 @@ kernel/tests/out/
 # kguard-agent build output
 agent/build/
 kernel/sparse.log
+kernel/tests/selftests/kguard_test
