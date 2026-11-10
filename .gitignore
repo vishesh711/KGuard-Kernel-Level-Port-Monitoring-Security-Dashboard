@@ -110,6 +110,7 @@ kernel/tests/out/
 # kguard-agent build output
 agent/build/
 kernel/sparse.log
+kernel/smatch.log
 kernel/tests/selftests/kguard_test
 # Fuzzing: binaries and corpus entries the fuzzers add (seeds are kept)
 kernel/tests/fuzz/tcp_options_fuzz

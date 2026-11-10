@@ -43,6 +43,18 @@ sparse:
 	@if grep -E "^[^ ]+\.[ch]:[0-9]+:[0-9]+: (warning|error):" sparse.log; then exit 1; fi
 	@echo "sparse: no warnings"
 
+# smatch (https://github.com/error27/smatch) with the kernel checks: any
+# warning or error in our files fails. SMATCH=/path/to/smatch if not on PATH.
+# Objects are cleaned first so that every file is checked.
+SMATCH ?= smatch
+smatch:
+	@$(MAKE) -C $(KDIR) M=$(PWD) clean >/dev/null
+	@$(MAKE) -C $(KDIR) M=$(PWD) C=2 CHECK="$(SMATCH) -p=kernel" modules > smatch.log 2>&1; status=$$?; \
+		cat smatch.log; if [ $$status -ne 0 ]; then echo "smatch: the build failed"; exit $$status; fi
+	@test $$(grep -c "CHECK " smatch.log) -gt 0 || { echo "smatch: no file was checked"; exit 1; }
+	@if grep -E "^$(PWD)/[^ ]+\.[ch]:[0-9]+ .*(warn|error):" smatch.log; then exit 1; fi
+	@echo "smatch: no warnings ($$(grep -c "CHECK " smatch.log) files checked)"
+
 # kselftest-style tests (TAP): device, Netlink commands, blocking. Run as
 # root with the module loaded: tests/selftests/kguard_test
 selftest: tests/selftests/kguard_test
@@ -93,4 +105,4 @@ help:
 	@echo "  logs      - View recent kernel logs for KGuard"
 	@echo "  help      - Show this help message"
 
-.PHONY: all clean checkpatch sparse selftest fuzz tools install uninstall status logs help
+.PHONY: all clean checkpatch sparse smatch selftest fuzz tools install uninstall status logs help

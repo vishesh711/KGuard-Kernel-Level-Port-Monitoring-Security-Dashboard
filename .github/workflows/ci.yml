@@ -126,6 +126,20 @@ jobs:
         run: |
           sudo apt-get install -y sparse
           make -C kernel sparse
+      - name: Cache smatch
+        uses: actions/cache@v4
+        with:
+          path: ~/smatch
+          key: smatch-5189e3fb018b783a26dcb45c02c114c1d1aad290-${{ runner.os }}
+      - name: Static analysis (smatch, warnings fail)
+        run: |
+          if [ ! -x ~/smatch/smatch ]; then
+            sudo apt-get install -y libsqlite3-dev libssl-dev
+            git clone https://github.com/error27/smatch.git ~/smatch
+            git -C ~/smatch checkout 5189e3fb018b783a26dcb45c02c114c1d1aad290
+            make -C ~/smatch -j"$(nproc)" smatch
+          fi
+          make -C kernel smatch SMATCH=$HOME/smatch/smatch
       - name: User-space tools
         run: make -C kernel tools
       - name: Lint Python tools, tests and lab scripts (ruff)
