@@ -225,22 +225,30 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
 
 ## Phase 7 — Frontend upgrade
 
-- [ ] **U7.0 Build the placeholder pages.** Events, Alerts, Analytics and Settings are still "coming soon" stubs. Events: filterable, paginated table. Alerts: list with acknowledge/resolve. Analytics: top IPs, top ports, alerts over time. Settings: show detection thresholds.
+- [x] **U7.0 Build the placeholder pages.** Events, Alerts, Analytics and Settings are still "coming soon" stubs. Events: filterable, paginated table. Alerts: list with acknowledge/resolve. Analytics: top IPs, top ports, alerts over time. Settings: show detection thresholds.
   *Done when:* every sidebar link shows real data.
-- [ ] **U7.1 Live data.** Use WebSocket messages to update React Query caches instead of only polling.
+  *Status:* Done. Events (filters for addresses, port, protocol, direction, process, host, suspicious; pagination), Alerts (status, severity and type filters; acknowledge), Analytics (alerts and events over time, top sources, ports, alert types; 1 h / 24 h / 7 d) and Settings (thresholds, automatic blocking, notification channels, enrichment, retention) are real pages, plus new Processes and Blocked pages. Checked in Chromium against a real backend with two agents' traffic: every sidebar link shows real data (8/8). Unit tests for each page. Also fixed a latent Tailwind error (undefined `ring-ring` token) that broke the CSS and the production build as soon as the button classes were used.
+- [x] **U7.1 Live data.** Use WebSocket messages to update React Query caches instead of only polling.
   *Done when:* new events appear without refresh in under 1 second.
-- [ ] **U7.2 Process view.** Table of listening ports and active connections with process, PID and user; highlight unexpected listeners.
+  *Status:* Done. A WebSocket event goes straight into the cached lists of newest events (no request); filtered lists and statistics refresh at most every 2 seconds. Measured in Chromium: from an agent POSTing an event to its row on the Events page, 26-72 ms over 8 runs.
+- [x] **U7.2 Process view.** Table of listening ports and active connections with process, PID and user; highlight unexpected listeners.
   *Done when:* starting `nc -l 4444` on a host shows up within seconds.
-- [ ] **U7.3 Blocked IPs page.** List, add, unblock, and show expiry and reason.
+  *Status:* Done. `/api/sockets` reads /proc/net (TCP/UDP, IPv4/IPv6) with process, PID and user, like `ss -tunap`; agents send the same snapshot every few seconds. A host's first snapshot is its baseline (this server's is taken a few seconds after start-up, once its own port is open); later listeners are highlighted until an admin marks them expected. In the VM: `nc -l 4444` on the backend's machine appeared flagged in 0.6 s, and `nc -l 4446` on an agent's host in 2.2 s, with the right PID and user. Found and fixed on the way: baselining at first view (a listener started before anyone looked became "normal"), and baselining before uvicorn opened its port (the backend flagged itself).
+- [x] **U7.3 Blocked IPs page.** List, add, unblock, and show expiry and reason.
   *Done when:* blocking and unblocking work from the UI.
-- [ ] **U7.4 Alert details.** Show scan type, OS guess, TLS fingerprint, country, MITRE technique, related events and a pcap download.
+  *Status:* Done. Blocked page: active blocks and history with reason, manual or automatic (linked to its alert), host and time left; block and unblock, allowlist, audit log, each agent's enforcement state. In Chromium: blocking from the form put the address in the agents' blocklist, and Unblock removed it.
+- [x] **U7.4 Alert details.** Show scan type, OS guess, TLS fingerprint, country, MITRE technique, related events and a pcap download.
   *Done when:* each alert type shows its own detail panel.
-- [ ] **U7.5 Hosts page.** One row per agent: status, version, engine (module or eBPF), events/s, drops.
+  *Status:* Done. `/alerts/:id`: summary with country, threat lists and MITRE link; a panel per alert type built from its detector's metadata (scan type and ports, OS/tool fingerprint, SYN cookies, spoofing reason, amplification factor, DNS tunnel domain, JA3/JA4/SNI, baseline ratio, ...); related events (new `?ids=` filter); pcap download; acknowledge/resolve/block for admins. Unit tests render a panel for each of 8 alert types; checked in Chromium on a real port-scan alert.
+- [x] **U7.5 Hosts page.** One row per agent: status, version, engine (module or eBPF), events/s, drops.
   *Done when:* two agents show separately.
-- [ ] **U7.6 Login screen and roles.** Viewer can't see admin actions.
+  *Status:* Done. One row per agent with status, engine, version, events per second (from stored events of the last minute, so right after restarts and across processes), drops, blocklist state. Two agents (eBPF and module) showed as separate rows in Chromium; tested in the backend and the frontend.
+- [x] **U7.6 Login screen and roles.** Viewer can't see admin actions.
   *Done when:* role checks are tested.
-- [ ] **U7.7 Kernel health panel.** Show the module or eBPF counters (K2.10): buffer fill, drops, nanoseconds per packet.
+  *Status:* Done. Viewers see every page but no acknowledge, resolve, block, unblock, allowlist or "mark expected" controls (the API refuses them anyway). Role checks are unit-tested on the alerts, alert detail, blocks and processes pages, and checked in Chromium by logging in as a viewer.
+- [x] **U7.7 Kernel health panel.** Show the module or eBPF counters (K2.10): buffer fill, drops, nanoseconds per packet.
   *Done when:* the numbers match `debugfs`.
+  *Status:* Done. Hosts page panel: packets, events, drops, buffer fill against ring capacity, ns per packet, mode and guard counters, read over Generic Netlink GET_STATS (no privileges needed). In the VM the API's values lie between two debugfs reads taken around the call, and ring capacity, hooked namespaces and blocklist size equal debugfs exactly. eBPF agents report only their drops (on the Hosts table).
 
 ## Phase 8 — Proof: benchmarks, attack demos, kernel testing
 

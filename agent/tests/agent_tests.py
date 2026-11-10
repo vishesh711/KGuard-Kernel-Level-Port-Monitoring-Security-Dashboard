@@ -596,6 +596,88 @@ def test_local_enforcement():
         sh(KGUARDCTL + ["unblock", ATK4], check_rc=False)
 
 
+def debugfs_stats():
+    if not os.path.exists("/sys/kernel/debug/kguard"):
+        sh("mount -t debugfs none /sys/kernel/debug", check_rc=False)
+    values = {}
+    for line in open("/sys/kernel/debug/kguard/stats"):
+        name, value = line.split()
+        values[name] = int(value)
+    return values
+
+
+def test_process_view_and_kernel_counters():
+    """U7.2: nc -l shows up as a new listener; U7.7: the counters match debugfs"""
+    load_module()
+    backend = Backend(LOCAL_ENFORCEMENT="off")
+    backend.start()
+    state = "/tmp/kguard-agent-procs"
+    agent = None
+    listeners = []
+    try:
+        # --- this server: the backend reads /proc itself. It records what listens
+        # a few seconds after start-up as normal; start nc after that
+        time.sleep(7)
+        nc = subprocess.Popen(["nc", "-l", "4444"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        listeners.append(nc)
+        started = time.time()
+
+        def nc_listed():
+            return [x for x in api("/api/sockets")["listeners"] if x["lport"] == 4444 and x["proto"] == "TCP"]
+        found = wait_for(nc_listed, 10)
+        mine = nc_listed()
+        check("process view: nc -l 4444 on this server shows up, flagged new, with its process",
+              found and mine[0]["new"] and mine[0]["process"] == "nc" and mine[0]["pid"] == nc.pid,
+              f"{time.time() - started:.1f}s {mine[:1]}")
+        flagged = [(x["lport"], x["process"]) for x in api("/api/sockets")["listeners"]
+                   if x["new"] and x["lport"] != 4444]
+        check("process view: the listeners that were there at start-up are not flagged", not flagged, flagged)
+
+        # --- an agent's host: the agent sends snapshots
+        check("process view: agent enrolls", enroll("procs", state).returncode == 0)
+        agent = Agent("--engine", "ebpf", "--iface", "lo", "--server", API, "--state-dir", state,
+                      "--sync-seconds", "2")
+        agent.started()
+        agent_id = [a["id"] for a in api("/api/agents/") if a["name"] == "procs"][0]
+        wait_for(lambda: api(f"/api/sockets?host_id={agent_id}")["taken_at"], 20)
+        nc2 = subprocess.Popen(["nc", "-l", "4446"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        listeners.append(nc2)
+        started = time.time()
+
+        def agent_nc():
+            return [x for x in api(f"/api/sockets?host_id={agent_id}")["listeners"] if x["lport"] == 4446]
+        found = wait_for(agent_nc, 20)
+        mine = agent_nc()
+        check("process view: nc -l 4446 on an agent's host shows up within seconds, flagged new",
+              found and mine[0]["new"] and mine[0]["process"] == "nc" and mine[0]["pid"] == nc2.pid
+              and mine[0]["user"] == "root", f"{time.time() - started:.1f}s {mine[:1]}")
+
+        # --- kernel counters: the API between two debugfs reads
+        subprocess.run(["curl", "-s", "--max-time", "1", "http://127.0.0.1:4444/"], capture_output=True)
+        before = debugfs_stats()
+        counters = api("/api/health/kernel/counters")
+        after = debugfs_stats()
+        stats = counters.get("stats", {})
+        growing = ["packets", "events", "dropped", "filtered", "alerts", "block_drops", "rate_drops", "spoofed"]
+        within = {k: before[k] <= stats.get(k, -1) <= after[k] for k in growing}
+        check("kernel counters: available over Netlink", counters.get("available"), counters.get("reason"))
+        check("kernel counters: running totals lie between two debugfs reads taken around the API call",
+              all(within.values()), {k: (before[k], stats.get(k), after[k]) for k in growing})
+        same = {"ring_capacity": counters.get("ring_capacity"), "netns_hooked": stats.get("netns_hooked"),
+                "blocks": stats.get("blocks")}
+        check("kernel counters: ring capacity, hooked namespaces and blocklist size equal debugfs",
+              all(same[k] == before[k] == after[k] for k in same), (same, {k: before[k] for k in same}))
+        check("kernel counters: packets were counted and ns/packet is measured",
+              stats.get("packets", 0) > 0 and stats.get("ns_per_packet", 0) > 0,
+              (stats.get("packets"), stats.get("ns_per_packet"), before["ns_per_packet"]))
+    finally:
+        for p in listeners:
+            p.kill()
+        if agent:
+            agent.stop()
+        backend.stop()
+
+
 def main():
     if os.geteuid():
         raise SystemExit("run as root")
@@ -611,7 +693,7 @@ def main():
             check(f"{test.__name__} ran without errors", False, repr(e)[:200])
     with Lab():
         for test in (test_xdp_blocklist, test_module_engine, test_two_hosts, test_backend_restart,
-                     test_response_engine, test_local_enforcement):
+                     test_response_engine, test_local_enforcement, test_process_view_and_kernel_counters):
             if only and test.__name__ not in only:
                 continue
             try:

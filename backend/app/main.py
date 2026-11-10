@@ -65,6 +65,9 @@ def update_threat_lists() -> None:
     update()
 
 
+# Seconds after start-up before this server's listeners are recorded as normal
+BASELINE_DELAY_SECONDS = 5
+
 # Seconds between renewing this machine's block leases (well inside BLOCK_LEASE_SECONDS)
 ENFORCE_INTERVAL = 5
 # Apply every blocklist change to this machine's kernel module straight away
@@ -113,6 +116,19 @@ async def periodic_tasks():
             await asyncio.sleep(60)
 
 
+async def baseline_listeners():
+    """
+    This server's listening sockets become its normal set (first start only).
+    Waits until uvicorn has opened its own port, which happens after start-up,
+    so the backend's port is part of the baseline rather than flagged as new.
+    """
+    await asyncio.sleep(BASELINE_DELAY_SECONDS)
+    try:
+        await asyncio.get_running_loop().run_in_executor(None, baseline_this_server)
+    except Exception as e:
+        logger.error(f"Listener baseline failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start background work on startup and stop it cleanly on shutdown"""
@@ -129,14 +145,13 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("Database connection failed")
     logger.info("Database initialized successfully")
     ensure_bootstrap_admin()
-    # This server's listening sockets now are its normal set (first start only)
-    await asyncio.get_running_loop().run_in_executor(None, baseline_this_server)
 
     packet_capture.start()
     notifier.start()
     background = [
         asyncio.create_task(data_collector.start_collection(), name="data_collector"),
         asyncio.create_task(periodic_tasks(), name="periodic_tasks"),
+        asyncio.create_task(baseline_listeners(), name="baseline_listeners"),
     ]
     logger.info("KGuard Backend Service started successfully")
 
