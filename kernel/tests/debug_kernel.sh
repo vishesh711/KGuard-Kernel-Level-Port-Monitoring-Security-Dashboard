@@ -19,9 +19,10 @@
 #
 # Timing checks fail on debug kernels (much slower), so functional results
 # are shown but not judged. The exit status is the checkers' verdict: 0 when
-# the suite finished with no checker report in the kernel log (lockdep,
-# KCSAN, KASAN, UBSAN, WARNING/BUG) and no kmemleak object from kguard;
-# 1 otherwise; 2 when the suite did not finish. CI runs it for both
+# the suite finished with no checker report (lockdep, KCSAN, KASAN, UBSAN,
+# WARNING/BUG) involving kguard and no kmemleak object from kguard; 1
+# otherwise; 2 when the suite did not finish. Reports that do not involve
+# kguard (a vanilla debug kernel has some races of its own) are listed only. CI runs it for both
 # flavours (.github/workflows/debug-kernel.yml).
 
 set -euo pipefail
@@ -61,7 +62,9 @@ python3 -u tests/vm_tests.py 2>&1 | grep --line-buffered -E "^(PASS|FAIL|SKIP)|c
 echo "=== detector findings"
 echo scan > /sys/kernel/debug/kmemleak; sleep 6; echo scan > /sys/kernel/debug/kmemleak
 echo "kmemleak objects from kguard: \$(grep -c kguard /sys/kernel/debug/kmemleak || true)"
-dmesg | grep -E "$PATTERN" || true
+echo "=== kernel log"
+dmesg
+echo "=== end kernel log"
 SCRIPT
 
 args=(--cpus 4 --memory 4G --exec "bash $WORK/run.sh")
@@ -69,13 +72,17 @@ args=(--cpus 4 --memory 4G --exec "bash $WORK/run.sh")
 vng -r "$SRC/arch/x86/boot/bzImage" "${args[@]}" 2>&1 | tee "$WORK/log" | grep -E '^live: |=== detector|kmemleak objects|checks passed' || true
 echo "Full log: $WORK/log"
 
-# The verdict: the run finished, no checker reported anything, nothing leaked.
-# (Functional checks are not judged here: timing checks fail on slow debug kernels.)
-if ! grep -q "^=== detector findings" "$WORK/log"; then
+# The verdict: the run finished, no checker report involves kguard, and
+# nothing kguard allocated leaked. Reports elsewhere in the kernel are listed
+# but not counted (tests/checker_reports.py). Functional checks are not
+# judged here: timing checks fail on slow debug kernels.
+if ! grep -q "^=== end kernel log" "$WORK/log"; then
     echo "debug kernel: the suite did not finish (boot failure, crash or timeout)"
     exit 2
 fi
-reports=$(sed -n '/^=== detector findings/,$p' "$WORK/log" | grep -v "^kmemleak objects" | grep -cE "$PATTERN" || true)
 leaks=$(sed -n 's/^kmemleak objects from kguard: \([0-9]*\).*/\1/p' "$WORK/log")
-echo "debug kernel (${DEBUG_FLAVOR:-kcsan}): $reports checker reports, ${leaks:-?} kmemleak objects from kguard"
-[[ "$reports" -eq 0 && "${leaks:-1}" -eq 0 ]]
+echo "== debug kernel (${DEBUG_FLAVOR:-kcsan}): ${leaks:-?} kmemleak objects from kguard"
+status=0
+python3 "$HERE/tests/checker_reports.py" "$WORK/log" || status=1
+[[ "${leaks:-1}" -eq 0 ]] || status=1
+exit $status
