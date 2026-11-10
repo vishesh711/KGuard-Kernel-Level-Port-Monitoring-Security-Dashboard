@@ -13,10 +13,16 @@ network namespace ("dut") where the monitoring runs, in each mode:
     ebpf-generic  the agent's eBPF engine, XDP in generic (skb) mode
     ebpf-native   the agent's eBPF engine, XDP in native (driver) mode
 
+and, the other way, pktgen sending out of "dut" through the qdisc layer
+(xmit_mode queue_xmit), so the agent's TC egress program sees every packet:
+
+    none-egress   nothing loaded
+    ebpf-tc       the agent's eBPF engine (its TC clsact egress program)
+
 For each mode it records:
     pps           packets per second reaching IP in "dut" (Ip InReceives)
     cpu_ns/pkt    all CPU time spent (kernel + softirq, every CPU) per packet
-    extra ns/pkt  cpu_ns/pkt minus the "none" run: the monitoring's cost
+    extra ns/pkt  cpu_ns/pkt minus the baseline run in the same direction
     own ns/pkt    the component's own measure: the module's ns_per_packet
                   counter, or the BPF programs' run_time_ns / run_cnt
     lost          events dropped (module rings / eBPF ring buffer)
@@ -71,23 +77,40 @@ def teardown():
         sh("rmmod kguard", check=False)
 
 
-def pgset(path, line):
+def pgset(path, line, netns=None):
+    if netns:
+        sh(["ip", "netns", "exec", netns, "sh", "-c", f"echo '{line}' > {path}"])
+        return
     with open(path, "w") as f:
         f.write(line + "\n")
 
 
-def pktgen(seconds):
-    """Flood from SEND for `seconds`; returns when stopped"""
-    mac = sh(f"ip -n {NS} -j link show {RECV}")
-    mac = json.loads(mac)[0]["address"]
+def is_egress(mode):
+    return mode in ("none-egress", "ebpf-tc")
+
+
+def pktgen(seconds, egress=False):
+    """Flood for `seconds`: into "dut" (ingress), or out of it through the qdisc layer"""
+    netns, dev_name, dst_ip = (NS, RECV, SRC_IP) if egress else (None, SEND, DST_IP)
+    peer = sh(["ip", "-j", "link", "show", SEND] if egress else ["ip", "-n", NS, "-j", "link", "show", RECV])
+    mac = json.loads(peer)[0]["address"]
     thread_file = "/proc/net/pktgen/kpktgend_0"
-    pgset(thread_file, "rem_device_all")
-    pgset(thread_file, f"add_device {SEND}")
-    dev = f"/proc/net/pktgen/{SEND}"
-    for line in ("count 0", "pkt_size 64", "delay 0", f"dst {DST_IP}", f"dst_mac {mac}",
-                 "udp_src_min 9", "udp_src_max 9", "udp_dst_min 5001", "udp_dst_max 5001",
-                 "flag NO_TIMESTAMP"):
-        pgset(dev, line)
+    pgset(thread_file, "rem_device_all", netns)
+    pgset(thread_file, f"add_device {dev_name}", netns)
+    dev = f"/proc/net/pktgen/{dev_name}"
+    lines = ["count 0", "pkt_size 64", "delay 0", f"dst {dst_ip}", f"dst_mac {mac}",
+             "udp_src_min 9", "udp_src_max 9", "udp_dst_min 5001", "udp_dst_max 5001",
+             "flag NO_TIMESTAMP"]
+    if egress:
+        lines.append("xmit_mode queue_xmit")
+    for line in lines:
+        pgset(dev, line, netns)
+    if egress:
+        runner = subprocess.Popen(["ip", "netns", "exec", NS, "sh", "-c", "echo start > /proc/net/pktgen/pgctrl"])
+        time.sleep(seconds)
+        pgset("/proc/net/pktgen/pgctrl", "stop", netns)
+        runner.wait()
+        return
     runner = threading.Thread(target=lambda: pgset("/proc/net/pktgen/pgctrl", "start"))
     runner.start()
     time.sleep(seconds)
@@ -95,8 +118,9 @@ def pktgen(seconds):
     runner.join()
 
 
-def in_receives():
-    text = sh(f"ip netns exec {NS} cat /proc/net/snmp")
+def in_receives(egress=False):
+    """Ip InReceives at the receiving end"""
+    text = sh("cat /proc/net/snmp" if egress else f"ip netns exec {NS} cat /proc/net/snmp")
     head, values = [line.split() for line in text.splitlines() if line.startswith("Ip:")][:2]
     return int(values[head.index("InReceives")])
 
@@ -138,6 +162,7 @@ def start_mode(mode):
         sh(["insmod", str(MODULE)])
         procs.append(subprocess.Popen([str(READER)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
     elif mode.startswith("ebpf"):
+        # The agent attaches XDP (ingress) and TC egress to the interface
         args = ["ip", "netns", "exec", NS, str(AGENT), "run", "--engine", "ebpf", "--stdout",
                 "--iface", RECV, "--no-payloads"]
         if mode == "ebpf-native":
@@ -231,22 +256,24 @@ def run_mode(mode, seconds, flame, out_dir):
     try:
         time.sleep(1)
         stats_before, bpf_before = module_stats(), bpf_run_stats()
-        recv0, cpu0, t0 = in_receives(), cpu_busy_ns(), time.monotonic()
+        egress = is_egress(mode)
+        recv0, cpu0, t0 = in_receives(egress), cpu_busy_ns(), time.monotonic()
         perf = None
         if flame:
             perf = subprocess.Popen(["perf", "record", "-a", "-g", "-F", "499", "-o",
                                      f"/tmp/perf-{mode}.data", "--", "sleep", str(seconds)],
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        pktgen(seconds)
+        pktgen(seconds, egress)
         elapsed = time.monotonic() - t0
-        recv, cpu = in_receives() - recv0, cpu_busy_ns() - cpu0
+        recv, cpu = in_receives(egress) - recv0, cpu_busy_ns() - cpu0
         stats_after, bpf_after = module_stats(), bpf_run_stats()
         if perf:
             perf.wait()
             flame_svg(fold_perf(f"/tmp/perf-{mode}.data"), f"KGuard benchmark: {mode}", out_dir / f"flame-{mode}.svg")
     finally:
         lost = stop_mode(mode, procs)
-    result = {"mode": mode, "seconds": round(elapsed, 2), "packets": recv, "pps": round(recv / elapsed),
+    result = {"mode": mode, "direction": "egress" if is_egress(mode) else "ingress",
+              "seconds": round(elapsed, 2), "packets": recv, "pps": round(recv / elapsed),
               "cpu_ns_per_packet": round(cpu / recv, 1) if recv else None}
     if mode == "module":
         result["own_ns_per_packet"] = stats_after.get("ns_per_packet")
@@ -272,7 +299,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--seconds", type=int, default=10)
     parser.add_argument("--repeat", type=int, default=3)
-    parser.add_argument("--modes", default="none,module,ebpf-generic,ebpf-native")
+    parser.add_argument("--modes", default="none,module,ebpf-generic,ebpf-native,none-egress,ebpf-tc")
     parser.add_argument("--flame", action="store_true")
     parser.add_argument("--out", default=str(ROOT / "docs" / "bench"))
     args = parser.parse_args()

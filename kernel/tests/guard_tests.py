@@ -90,8 +90,10 @@ class Lab:
 class AlertWatch:
     def __enter__(self):
         self.proc = subprocess.Popen(h.CTL + ["--json", "watch"], stdout=subprocess.PIPE,
-                                     stderr=subprocess.DEVNULL, text=True)
-        time.sleep(0.5)
+                                     stderr=subprocess.PIPE, text=True)
+        # kguardctl says "watching ..." once it has joined the multicast group;
+        # a fixed sleep misses alerts when Python starts slowly (emulated VMs)
+        self.proc.stderr.readline()
         return self
 
     def __exit__(self, *exc):
@@ -143,16 +145,21 @@ def test_block_and_expiry():
     """K3.4: blocked sources are dropped; blocks expire"""
     reset_guard()
     ctl("set", "enforce=1")
-    ctl("block", ATK4, "--timeout", "8")
-    before = stats()["block_drops"]
-    h.check("enforce: blocked source cannot connect", not reach())
-    h.check("enforce: drops are counted", stats()["block_drops"] > before)
+    # Each kguardctl run takes a second or two in an emulated VM, so the
+    # timeout leaves room and the listing comes right after the block
+    timeout = 20
+    blocked_at = time.monotonic()
+    ctl("block", ATK4, "--timeout", str(timeout))
     listed = json.loads(ctl("--json", "blocks").stdout)
     entry = listed[0] if listed else {}
     h.check("block is listed with its timeout and reason",
-            entry.get("address") == ATK4 and entry.get("reason") == "manual" and 0 < entry.get("expires_in", 0) <= 8,
-            listed)
-    time.sleep(9)  # timeout + garbage collection
+            entry.get("address") == ATK4 and entry.get("reason") == "manual"
+            and 0 < entry.get("expires_in", 0) <= timeout, repr(listed))
+    before = stats()["block_drops"]
+    h.check("enforce: blocked source cannot connect", not reach())
+    h.check("enforce: drops are counted", stats()["block_drops"] > before)
+    # Wait out the timeout, plus a second for garbage collection
+    time.sleep(max(0.0, blocked_at + timeout + 1 - time.monotonic()))
     gone = not json.loads(ctl("--json", "blocks").stdout)
     h.check("block expires and the source gets through again", reach() and gone)
     reset_guard()

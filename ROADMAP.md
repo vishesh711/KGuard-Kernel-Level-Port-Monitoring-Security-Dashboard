@@ -255,8 +255,9 @@ Architecture diagrams (today vs. target): https://claude.ai/artifact/NwCrCkZLKCc
 - [ ] **P8.1 Test lab.**
   *Progress:* `kernel/tests/run_in_vm.sh` boots a throwaway virtme-ng VM and runs the 33-check kernel suite (`kernel/tests/vm_tests.py`); `scripts/e2e_smoke.sh` runs the full stack. Attacker VM still to do. Vagrant or `virtme-ng` setup: one victim VM running KGuard, one attacker VM with nmap, hping3, hydra, scapy, iodine.
   *Done when:* `make lab` brings both up.
-- [ ] **P8.2 Attack demo scripts.** One script per attack in Phase 5, each checking that the expected alert appears.
+- [x] **P8.2 Attack demo scripts.** One script per attack in Phase 5, each checking that the expected alert appears.
   *Done when:* `make attack-demo` runs all of them and prints pass/fail.
+  *Status:* Done. `scripts/attacks/<attack>.sh` (scans, brute_force, syn_flood, os_fingerprint, spoofing, amplification, dns_tunnel, tls) each run one attack with real tools (nmap, hydra, hping3, scapy, iodine, openssl) in a VM; `make attack-demo` runs all eight and prints a PASS/FAIL line each. Run on the 6.8 kernel (emulated VM): 8/8 PASS, 35 checks (detection lab 21/21, payload lab 14/14).
 - [ ] **P8.3 Kernel debug builds.** Run the module's stress tests on a kernel with KASAN, KCSAN, lockdep and kmemleak enabled.
   *Done when:* zero reports from each tool, recorded in CI logs.
 - [ ] **P8.4 Kernel static checks.** `sparse` (`make C=1`), `checkpatch.pl --strict`, and `smatch` in CI.

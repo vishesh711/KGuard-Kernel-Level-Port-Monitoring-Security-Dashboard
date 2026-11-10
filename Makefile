@@ -99,5 +99,8 @@ status:
 attack-demo:
 	scripts/attack_demo.sh
 
+lab:
+	scripts/lab.sh
+
 bench:
 	scripts/bench_vm.sh --flame
