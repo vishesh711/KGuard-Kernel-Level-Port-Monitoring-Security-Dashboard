@@ -35,6 +35,13 @@ CHECKPATCH_FILES := $(filter-out src/kguard_trace.h,$(wildcard src/*.c src/*.h))
 checkpatch:
 	perl $(CHECKPATCH) --no-tree --strict --terse -f $(CHECKPATCH_FILES)
 
+# sparse (make C=2): type, address-space and endianness checks on every
+# source file. Fails on any warning (sparse itself never fails the build).
+sparse:
+	$(MAKE) -C $(KDIR) M=$(PWD) C=2 modules 2>&1 | tee sparse.log
+	@if grep -E "^[^ ]+\.[ch]:[0-9]+:[0-9]+: (warning|error):" sparse.log; then exit 1; fi
+	@echo "sparse: no warnings"
+
 # User-space tools: the zero-copy mmap reader (kguardctl.py needs no build)
 tools: tools/kguard_reader
 tools/kguard_reader: tools/kguard_reader.c include/uapi/linux/kguard.h

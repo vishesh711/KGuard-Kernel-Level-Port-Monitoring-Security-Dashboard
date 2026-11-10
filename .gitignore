@@ -93,6 +93,7 @@ logs/
 
 # Testing
 .coverage
+.coverage.*
 .pytest_cache/
 coverage.xml
 *.cover
@@ -108,3 +109,4 @@ kernel/tests/out/
 
 # kguard-agent build output
 agent/build/
+kernel/sparse.log

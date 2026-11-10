@@ -33,8 +33,14 @@ jobs:
         run: pip install -r requirements-dev.txt
       - name: Lint (ruff)
         run: ruff check .
-      - name: Tests
-        run: pytest --cov=app --cov-report=term-missing
+      - name: Tests, with coverage (fails under 80%, see pyproject.toml)
+        run: pytest --cov --cov-report=term --cov-report=xml
+      - name: Coverage report
+        if: matrix.python == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.xml
 
   backend-postgres:
     name: Backend on PostgreSQL 16 and Redis 7
@@ -116,6 +122,10 @@ jobs:
         run: make -C kernel
       - name: Coding style (checkpatch --strict)
         run: make -C kernel checkpatch
+      - name: Static analysis (sparse, warnings fail)
+        run: |
+          sudo apt-get install -y sparse
+          make -C kernel sparse
       - name: User-space tools
         run: make -C kernel tools
       - name: Lint Python tools, tests and lab scripts (ruff)

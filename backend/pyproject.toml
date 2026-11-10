@@ -13,3 +13,15 @@ extend-exclude = ["alembic/versions"]
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
 ignore = ["E712"]  # SQLAlchemy filters use == True / == False
+
+[tool.coverage.run]
+source = ["app"]
+# Tests start the real server (python -m app) and CLIs in subprocesses: measure those too
+patch = ["subprocess"]
+parallel = true
+
+[tool.coverage.report]
+# Roadmap P8.9: at least 80%; CI fails below it
+fail_under = 80
+show_missing = false
+skip_covered = false
