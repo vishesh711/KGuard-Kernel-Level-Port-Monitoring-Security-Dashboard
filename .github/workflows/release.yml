@@ -74,6 +74,8 @@ jobs:
         id: name
         run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kguard-${{ matrix.component }}" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
         with:
           context: ${{ matrix.component }}
           target: production
@@ -88,10 +90,16 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      # Only our two artifacts: build-push-action also uploads .dockerbuild
+      # records, which download-artifact cannot extract
       - uses: actions/download-artifact@v4
         with:
+          name: agent
           path: dist
-          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: module
+          path: dist
       - name: Checksums
         run: cd dist && sha256sum *.tar.gz > SHA256SUMS
       - name: Create the release
