@@ -118,4 +118,5 @@ kernel/tests/fuzz/crash-*
 backend/fuzz/corpus/
 crash-*
 # Benchmark scratch
-docs/bench/run.log
+docs/bench/kguard-bench-*.log
+docs/bench-smoke/

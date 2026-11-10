@@ -24,5 +24,5 @@ vm_args=(--cpus "${VM_CPUS:-4}" --memory 2G --rw)
 args=$(printf '%q ' "$@")
 mkdir -p docs/bench
 timeout "${VM_TIMEOUT:-3600}" vng "${vm_args[@]}" --exec \
-    "cd '$ROOT' && python3 scripts/benchmark.py $args > docs/bench/run.log 2>&1"
-cat docs/bench/run.log
+    "cd '$ROOT' && python3 scripts/benchmark.py $args > /tmp/kguard-bench-run.log 2>&1; cp /tmp/kguard-bench-*.log '$ROOT/docs/bench/' 2>/dev/null"
+cat docs/bench/kguard-bench-run.log
