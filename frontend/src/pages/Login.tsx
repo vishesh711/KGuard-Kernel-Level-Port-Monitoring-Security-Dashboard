@@ -1,7 +1,7 @@
 import { FormEvent, useState } from 'react'
 import { isAxiosError } from 'axios'
 import { ShieldCheckIcon } from '@heroicons/react/24/outline'
-import { useAuth } from '../context/auth'
+import { useAuth } from '../context/authContext'
 
 function loginError(error: unknown): string {
   if (isAxiosError(error)) {

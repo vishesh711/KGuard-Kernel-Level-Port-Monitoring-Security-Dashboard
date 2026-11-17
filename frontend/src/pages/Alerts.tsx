@@ -8,7 +8,7 @@ import { Empty, ErrorMessage, Loading } from '../components/ui/States'
 import { SeverityPill } from '../components/alerts/SeverityPill'
 import { EnrichmentTags } from '../components/dashboard/RecentAlerts'
 import { formatServerTime } from '../lib/format'
-import { useIsAdmin } from '../context/auth'
+import { useIsAdmin } from '../context/authContext'
 
 const TYPES: AlertType[] = [
   'PORT_SCAN',

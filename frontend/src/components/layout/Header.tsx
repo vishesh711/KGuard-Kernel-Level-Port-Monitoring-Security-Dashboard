@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowRightOnRectangleIcon, Bars3Icon, BellIcon } from '@heroicons/react/24/outline'
-import { useAuth } from '../../context/auth'
+import { useAuth } from '../../context/authContext'
 import { useLiveStatus } from '../../context/liveStatus'
 import { useActiveAlerts, useHealth } from '../../hooks/queries'
 

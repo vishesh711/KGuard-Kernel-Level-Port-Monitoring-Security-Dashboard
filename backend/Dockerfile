@@ -30,8 +30,10 @@ RUN pip install --no-cache-dir -r requirements-dev.txt
 # Copy application code
 COPY . .
 
-# Change ownership to app user
-RUN chown -R app:app /app
+# Owned by the app user, with data/ and logs/ created here so the volume
+# mounted on data/ starts out writable (otherwise Docker creates it root-owned
+# and the database cannot be opened)
+RUN mkdir -p /app/data /app/logs && chown -R app:app /app
 
 # Switch to app user
 USER app

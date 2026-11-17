@@ -27,13 +27,13 @@ SERIES=("$@")
 
 index=$(curl -fsSL --retry 3 "$MAINLINE/")
 
-newest() {  # newest point release of a series, e.g. 6.1 -> v6.1.192
+candidates() {  # newest point releases of a series, newest first, e.g. 6.1 -> v6.1.192 v6.1.191 v6.1.190
     if [[ "$1" == latest ]]; then
-        grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+/' <<<"$index" | grep -v -- '-rc' | sort -uV | tail -1 | tr -d /
+        grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+/' <<<"$index" | grep -v -- '-rc' | sort -uV | tail -3 | tac | tr -d /
     elif [[ "$1" == v* ]]; then
         echo "$1"
     else
-        grep -oE "v${1//./\\.}\.[0-9]+/" <<<"$index" | sort -uV | tail -1 | tr -d /
+        grep -oE "v${1//./\\.}\.[0-9]+/" <<<"$index" | sort -uV | tail -3 | tac | tr -d /
     fi
 }
 
@@ -58,10 +58,15 @@ fetch() {  # download and unpack one version's packages; prints the vmlinuz path
 results=()
 status=0
 for series in "${SERIES[@]}"; do
-    version=$(newest "$series")
-    echo "== $series: $version"
-    if ! image=$(fetch "$version"); then
-        results+=("$version  download failed")
+    # A release can appear before its packages are built: fall back to the one before
+    image=
+    for version in $(candidates "$series"); do
+        echo "== $series: $version"
+        image=$(fetch "$version") && break
+        image=
+    done
+    if [[ -z "$image" ]]; then
+        results+=("$series  download failed")
         status=1
         continue
     fi

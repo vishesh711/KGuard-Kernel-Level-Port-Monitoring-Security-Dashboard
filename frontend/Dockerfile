@@ -53,8 +53,10 @@ RUN chown -R nginx:nginx /usr/share/nginx/html && \
 EXPOSE 80
 
 # Health check
+# 127.0.0.1, not localhost: nginx listens on IPv4 only, and where IPv6 is
+# enabled localhost resolves to ::1 first, so the check was refused
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget -q -O /dev/null http://localhost/ || exit 1
+    CMD wget -q -O /dev/null http://127.0.0.1/ || exit 1
 
 # Start nginx
 CMD ["nginx", "-g", "daemon off;"]

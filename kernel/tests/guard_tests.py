@@ -134,6 +134,9 @@ def test_scan_with_colliding_ports():
     """K3.2: ports chosen 1024 apart are still distinct ports (they shared one bitmap bit
     when the bit was port % 1024, so such a scan was never counted)"""
     reset_guard()
+    # The previous test's scan from this source started a 10 s alert cooldown
+    # (KGUARD_ALERT_COOLDOWN_NS); a fast VM gets here before it ends
+    time.sleep(11)
     ports = ",".join(str(22 + 1024 * k) for k in range(40))
     with AlertWatch() as watch:
         nmap_attacker(ports)
@@ -296,12 +299,14 @@ for i in range({count}):
         try:
             raw.sendto(ip + udp, ("{HOST4}", 0))
             break
-        except OSError as e:  # ENOBUFS: the queue is full (fast, KVM-backed VMs); wait for room
-            if e.errno != 105:
+        except OSError as e:  # ENOBUFS/EAGAIN: the queue is full (fast, KVM-backed VMs); wait for room
+            if e.errno not in (105, 11):
                 raise
             time.sleep(0.001)
 """
-    in_ns([sys.executable, "-c", code], check=True)
+    result = in_ns([sys.executable, "-c", code])
+    if result.returncode:  # show the sender's own error, not just its exit status
+        raise RuntimeError(f"spoofed sender failed: {result.stderr.strip()[-300:]}")
 
 
 def forge(packets):

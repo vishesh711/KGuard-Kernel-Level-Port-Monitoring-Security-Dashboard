@@ -4,7 +4,7 @@ import toast from 'react-hot-toast'
 import { api } from '../services/api'
 import { SocketInfo } from '../types'
 import { useAgents } from '../hooks/queries'
-import { useIsAdmin } from '../context/auth'
+import { useIsAdmin } from '../context/authContext'
 import { Empty, ErrorMessage, Loading } from '../components/ui/States'
 import { endpoint, formatServerTime } from '../lib/format'
 

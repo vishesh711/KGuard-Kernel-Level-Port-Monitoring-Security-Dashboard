@@ -2,7 +2,7 @@ import { ReactNode, useCallback, useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { api } from '../services/api'
 import { SESSION_ENDED, Session, clearSession, loadSession, saveSession } from '../lib/session'
-import { AuthContext } from './auth'
+import { AuthContext } from './authContext'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
