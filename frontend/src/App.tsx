@@ -1,7 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { Layout } from './components/layout/Layout'
 import { LiveUpdatesProvider } from './context/LiveUpdates'
-import { useAuth } from './context/auth'
+import { useAuth } from './context/authContext'
 import { Dashboard } from './pages/Dashboard'
 import { Events } from './pages/Events'
 import { Alerts } from './pages/Alerts'

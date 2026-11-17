@@ -100,6 +100,12 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
         run: npm ci
+      # macOS ignores case: with Auth.tsx and auth.ts side by side, "./Auth"
+      # resolved to the wrong file there and the dashboard was a blank page
+      - name: No file names that differ only in case
+        run: |
+          clashes=$(find src -type f | sed -E 's/\.[^./]+$//' | tr '[:upper:]' '[:lower:]' | sort | uniq -d)
+          test -z "$clashes" || { echo "Names that differ only in case: $clashes"; exit 1; }
       - name: Formatting (Prettier)
         run: npm run format:check
       - name: Lint (ESLint)

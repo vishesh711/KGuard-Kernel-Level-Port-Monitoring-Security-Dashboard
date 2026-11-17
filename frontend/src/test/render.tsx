@@ -3,7 +3,7 @@ import { render } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { LiveStatusContext } from '../context/liveStatus'
-import { AuthContext } from '../context/auth'
+import { AuthContext } from '../context/authContext'
 import { Role } from '../lib/session'
 
 interface Options {

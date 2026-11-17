@@ -9,7 +9,7 @@ import { alertFacts } from '../components/alerts/AlertFacts'
 import { SeverityPill } from '../components/alerts/SeverityPill'
 import { ErrorMessage, Loading } from '../components/ui/States'
 import { endpoint, formatEventTime, formatServerTime, tcpFlags } from '../lib/format'
-import { useIsAdmin } from '../context/auth'
+import { useIsAdmin } from '../context/authContext'
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
