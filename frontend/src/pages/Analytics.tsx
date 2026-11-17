@@ -15,6 +15,7 @@ import { format } from 'date-fns'
 import { api } from '../services/api'
 import { parseServerDate } from '../lib/time'
 import { Empty, ErrorMessage, Loading } from '../components/ui/States'
+import { CHART } from '../components/charts/theme'
 
 const RANGES = [
   { hours: 1, label: 'Last hour' },
@@ -126,11 +127,35 @@ export function Analytics() {
           <div className="h-64">
             <ResponsiveContainer>
               <LineChart data={alerts.data.alerts_per_hour}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="hour" tickFormatter={hourLabel(hours)} fontSize={11} />
-                <YAxis allowDecimals={false} fontSize={11} />
-                <Tooltip labelFormatter={hourLabel(hours)} />
-                <Line type="monotone" dataKey="count" name="Alerts" stroke="#dc2626" dot={false} />
+                <CartesianGrid stroke={CHART.grid} vertical={false} />
+                <XAxis
+                  dataKey="hour"
+                  tickFormatter={hourLabel(hours)}
+                  fontSize={11}
+                  stroke={CHART.axis}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <YAxis
+                  allowDecimals={false}
+                  fontSize={11}
+                  stroke={CHART.axis}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <Tooltip
+                  labelFormatter={hourLabel(hours)}
+                  contentStyle={CHART.tooltip}
+                  cursor={{ fill: CHART.grid }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="count"
+                  name="Alerts"
+                  stroke={CHART.red}
+                  strokeWidth={2}
+                  dot={false}
+                />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -139,11 +164,22 @@ export function Analytics() {
           <div className="h-64">
             <ResponsiveContainer>
               <BarChart data={events.data.events_per_hour}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="hour" tickFormatter={hourLabel(hours)} fontSize={11} />
-                <YAxis fontSize={11} />
-                <Tooltip labelFormatter={hourLabel(hours)} />
-                <Bar dataKey="count" name="Events" fill="#2563eb" />
+                <CartesianGrid stroke={CHART.grid} vertical={false} />
+                <XAxis
+                  dataKey="hour"
+                  tickFormatter={hourLabel(hours)}
+                  fontSize={11}
+                  stroke={CHART.axis}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <YAxis fontSize={11} stroke={CHART.axis} tickLine={false} axisLine={false} />
+                <Tooltip
+                  labelFormatter={hourLabel(hours)}
+                  contentStyle={CHART.tooltip}
+                  cursor={{ fill: CHART.grid }}
+                />
+                <Bar dataKey="count" name="Events" fill={CHART.blue} radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>

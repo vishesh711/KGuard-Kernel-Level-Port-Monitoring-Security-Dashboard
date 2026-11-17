@@ -94,6 +94,21 @@ you set `enforce=1`.
 A permanent install (DKMS), TLS, agents on more hosts, monitoring and
 upgrades: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
+### Just the dashboard, with sample data (any OS, including macOS)
+
+The kernel module needs Linux, but the dashboard and backend run anywhere
+Docker does. With no module there is no live traffic, so a script sends sample
+traffic and attacks through the agent API, and the real detectors raise the
+alerts:
+
+```bash
+printf 'SECRET_KEY=%s\nADMIN_PASSWORD=change-me-please\nAGENT_ENROLLMENT_KEY=demo-key-123\n' "$(openssl rand -hex 32)" > .env
+docker compose up -d --build
+AGENT_ENROLLMENT_KEY=demo-key-123 python3 scripts/demo/seed.py
+```
+
+Then open `http://localhost:3000/` and log in as `admin` / `change-me-please`.
+
 ## Repository
 
 | Path | What |

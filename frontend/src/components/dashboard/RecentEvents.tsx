@@ -32,21 +32,21 @@ export function RecentEvents({ events }: RecentEventsProps) {
     <div className="flow-root">
       <ul role="list" className="divide-y divide-gray-200">
         {events.map((event) => (
-          <li key={event.id} className="px-6 py-4">
+          <li key={event.id} className="px-5 py-2.5 hover:bg-gray-50">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-3">
                 <div className="flex-shrink-0">
                   <span
-                    className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getProtocolColor(event.protocol)}`}
+                    className={`inline-flex w-12 justify-center rounded px-1.5 py-0.5 text-[11px] font-semibold ${getProtocolColor(event.protocol)}`}
                   >
                     {event.protocol}
                   </span>
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-gray-900 truncate">
+                  <p className="truncate font-mono text-[13px] text-gray-800">
                     {event.src_ip}:{event.src_port} → {event.dst_ip}:{event.dst_port}
                   </p>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-xs text-gray-500">
                     {event.direction && <span className="mr-2 uppercase">{event.direction}</span>}
                     {event.process_name && (
                       <span className="mr-2 font-mono">

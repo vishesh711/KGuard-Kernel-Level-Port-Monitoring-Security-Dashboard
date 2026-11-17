@@ -59,8 +59,11 @@ function Enrichment({ alert }: { alert: SecurityAlert }) {
   )
 }
 
+const RELATED_SHOWN = 25
+
 function RelatedEvents({ alert }: { alert: SecurityAlert }) {
   const ids = alert.related_event_ids ?? []
+  const [showAll, setShowAll] = useState(false)
   const events = useQuery({
     queryKey: ['events', 'byIds', alert.id],
     queryFn: () => api.getEventsByIds(ids),
@@ -69,35 +72,43 @@ function RelatedEvents({ alert }: { alert: SecurityAlert }) {
   if (!ids.length) return <p className="text-sm text-gray-500">No related events recorded.</p>
   if (events.isPending) return <Loading />
   if (events.isError) return <ErrorMessage error={events.error} />
+  const shown = showAll ? events.data : events.data.slice(0, RELATED_SHOWN)
   return (
-    <table className="min-w-full text-xs">
-      <thead className="text-left text-gray-500">
-        <tr>
-          <th className="py-1 pr-3">Time</th>
-          <th className="py-1 pr-3">Source</th>
-          <th className="py-1 pr-3">Destination</th>
-          <th className="py-1 pr-3">Protocol</th>
-          <th className="py-1 pr-3">TTL / window</th>
-          <th className="py-1 pr-3">OS guess</th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-gray-100 font-mono">
-        {events.data.map((e) => (
-          <tr key={e.id}>
-            <td className="py-1 pr-3">{formatEventTime(e.timestamp)}</td>
-            <td className="py-1 pr-3">{endpoint(e.src_ip, e.src_port)}</td>
-            <td className="py-1 pr-3">{endpoint(e.dst_ip, e.dst_port)}</td>
-            <td className="py-1 pr-3">
-              {e.protocol} {tcpFlags(e.protocol, e.flags)}
-            </td>
-            <td className="py-1 pr-3">
-              {e.ttl ?? '—'} / {e.tcp_window ?? '—'}
-            </td>
-            <td className="py-1 pr-3 font-sans">{e.os_guess ?? '—'}</td>
+    <>
+      <table className="min-w-full text-xs">
+        <thead className="text-left text-gray-500">
+          <tr>
+            <th className="py-1 pr-3">Time</th>
+            <th className="py-1 pr-3">Source</th>
+            <th className="py-1 pr-3">Destination</th>
+            <th className="py-1 pr-3">Protocol</th>
+            <th className="py-1 pr-3">TTL / window</th>
+            <th className="py-1 pr-3">OS guess</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody className="divide-y divide-gray-100 font-mono">
+          {shown.map((e) => (
+            <tr key={e.id}>
+              <td className="py-1 pr-3">{formatEventTime(e.timestamp)}</td>
+              <td className="py-1 pr-3">{endpoint(e.src_ip, e.src_port)}</td>
+              <td className="py-1 pr-3">{endpoint(e.dst_ip, e.dst_port)}</td>
+              <td className="py-1 pr-3">
+                {e.protocol} {tcpFlags(e.protocol, e.flags)}
+              </td>
+              <td className="py-1 pr-3">
+                {e.ttl ?? '—'} / {e.tcp_window ?? '—'}
+              </td>
+              <td className="py-1 pr-3 font-sans">{e.os_guess ?? '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {events.data.length > shown.length && (
+        <button type="button" className="btn-secondary btn-sm mt-3" onClick={() => setShowAll(true)}>
+          Show all {events.data.length} events
+        </button>
+      )}
+    </>
   )
 }
 
@@ -217,7 +228,9 @@ export function AlertDetail() {
         </section>
 
         <section className="card card-content" aria-label={`${a.alert_type} details`}>
-          <h2 className="mb-2 font-semibold">{a.alert_type.replace(/_/g, ' ').toLowerCase()} details</h2>
+          <h2 className="mb-2 font-semibold">
+            {a.alert_type.charAt(0) + a.alert_type.slice(1).replace(/_/g, ' ').toLowerCase()} details
+          </h2>
           {facts.length ? (
             <dl className="divide-y divide-gray-100">
               {facts.map((f) => (

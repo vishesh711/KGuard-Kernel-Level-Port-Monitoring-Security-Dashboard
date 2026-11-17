@@ -1,68 +1,82 @@
+import colors from 'tailwindcss/colors'
+
+/*
+ * Dark security-console theme.
+ *
+ * The pages use Tailwind's usual light-theme classes (bg-gray-50, text-gray-900,
+ * bg-red-100 text-red-800, ...). Instead of rewriting every class, the scales are
+ * redefined for a dark background: low numbers are dark, high numbers are light.
+ *   gray:   50 page, 100 raised/hover, 200 borders, 300 input borders,
+ *           400-600 muted text, 700-900 body text and headings
+ *   colour: 50-200 dark tints (backgrounds, borders), 300-600 the colour itself,
+ *           700-950 light tints (text on a tinted background)
+ */
+
+const PAGE = '#0a0f1a'
+
+function mix(hex, base, amount) {
+  const parse = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16))
+  const [a, b] = [parse(hex), parse(base)]
+  return '#' + a.map((v, i) => Math.round(v * amount + b[i] * (1 - amount)).toString(16).padStart(2, '0')).join('')
+}
+
+function dark(scale) {
+  return {
+    50: mix(scale[500], PAGE, 0.1),
+    100: mix(scale[500], PAGE, 0.18),
+    200: mix(scale[500], PAGE, 0.32),
+    300: scale[400],
+    400: scale[400],
+    500: scale[500],
+    600: scale[500],
+    700: scale[300],
+    800: scale[200],
+    900: scale[100],
+    950: scale[50],
+  }
+}
+
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-  ],
+  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
       colors: {
-        primary: {
-          50: '#eff6ff',
-          100: '#dbeafe',
-          200: '#bfdbfe',
-          300: '#93c5fd',
-          400: '#60a5fa',
-          500: '#3b82f6',
-          600: '#2563eb',
-          700: '#1d4ed8',
-          800: '#1e40af',
-          900: '#1e3a8a',
+        page: PAGE,
+        surface: '#101827',
+        sunken: '#0d1422',
+        gray: {
+          50: '#0d1422',
+          100: '#162033',
+          200: '#1f2b40',
+          300: '#2c3a52',
+          400: '#5f6f87',
+          500: '#8292a9',
+          600: '#9aa8bc',
+          700: '#c2cbd8',
+          800: '#dbe2ec',
+          900: '#eef2f7',
+          950: '#ffffff',
         },
-        danger: {
-          50: '#fef2f2',
-          100: '#fee2e2',
-          200: '#fecaca',
-          300: '#fca5a5',
-          400: '#f87171',
-          500: '#ef4444',
-          600: '#dc2626',
-          700: '#b91c1c',
-          800: '#991b1b',
-          900: '#7f1d1d',
-        },
-        warning: {
-          50: '#fffbeb',
-          100: '#fef3c7',
-          200: '#fde68a',
-          300: '#fcd34d',
-          400: '#fbbf24',
-          500: '#f59e0b',
-          600: '#d97706',
-          700: '#b45309',
-          800: '#92400e',
-          900: '#78350f',
-        },
-        success: {
-          50: '#f0fdf4',
-          100: '#dcfce7',
-          200: '#bbf7d0',
-          300: '#86efac',
-          400: '#4ade80',
-          500: '#22c55e',
-          600: '#16a34a',
-          700: '#15803d',
-          800: '#166534',
-          900: '#14532d',
-        },
+        red: dark(colors.red),
+        orange: dark(colors.orange),
+        amber: dark(colors.amber),
+        yellow: dark(colors.amber),
+        green: dark(colors.emerald),
+        emerald: dark(colors.emerald),
+        blue: dark(colors.sky),
+        sky: dark(colors.sky),
+        indigo: dark(colors.indigo),
+        purple: dark(colors.violet),
+        violet: dark(colors.violet),
+        primary: dark(colors.sky),
+        danger: dark(colors.red),
+        warning: dark(colors.amber),
+        success: dark(colors.emerald),
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'Consolas', 'monospace'],
-      },
-      animation: {
-        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-        'bounce-slow': 'bounce 2s infinite',
+        mono: ['JetBrains Mono', 'ui-monospace', 'Consolas', 'monospace'],
       },
     },
   },

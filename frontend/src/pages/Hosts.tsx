@@ -110,7 +110,7 @@ export function Hosts() {
                 <th className="px-4 py-3">Blocklist</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200 bg-white">
+            <tbody className="divide-y divide-gray-200 bg-surface">
               {(agents.data ?? []).map((agent) => (
                 <HostRow key={agent.id} agent={agent} />
               ))}

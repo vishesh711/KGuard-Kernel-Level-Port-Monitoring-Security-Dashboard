@@ -28,42 +28,47 @@ function Panel({
   title,
   icon,
   link,
+  className = '',
   children,
 }: {
   title: string
   icon: ReactNode
   link?: string
+  className?: string
   children: ReactNode
 }) {
   return (
-    <div className="card">
-      <div className="card-header">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            {icon}
-            <h3 className="text-lg font-medium text-gray-900">{title}</h3>
-          </div>
-          {link && (
-            <Link to={link} className="text-sm text-blue-600 hover:text-blue-700">
-              View all
-            </Link>
-          )}
+    <section className={`card flex flex-col ${className}`}>
+      <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
+        <div className="flex items-center gap-x-2">
+          {icon}
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-600">{title}</h2>
         </div>
+        {link && (
+          <Link to={link} className="text-xs font-medium text-primary-400 hover:text-primary-300">
+            View all →
+          </Link>
+        )}
       </div>
-      {children}
-    </div>
+      <div className="flex-1">{children}</div>
+    </section>
   )
 }
 
 function StatusDot({ ok, label, detail }: { ok: boolean; label: string; detail: string }) {
   return (
-    <div className="flex items-center space-x-3">
-      <div className={`h-3 w-3 rounded-full ${ok ? 'bg-green-500' : 'bg-red-500'}`}></div>
-      <div>
-        <p className="text-sm font-medium text-gray-900">{label}</p>
-        <p className="text-xs text-gray-500">{detail}</p>
-      </div>
-    </div>
+    <li className="flex items-center justify-between gap-x-3 py-2.5">
+      <span className="text-sm text-gray-700">{label}</span>
+      <span
+        className={`inline-flex items-center gap-x-1.5 text-xs font-medium ${ok ? 'text-green-600' : 'text-red-600'}`}
+      >
+        <span
+          className={`h-1.5 w-1.5 rounded-full ${ok ? 'bg-green-500' : 'bg-red-500'}`}
+          aria-hidden="true"
+        />
+        {detail}
+      </span>
+    </li>
   )
 }
 
@@ -89,9 +94,11 @@ export function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Security Dashboard</h1>
-        <p className="mt-1 text-sm text-gray-600">Real-time network monitoring and threat detection</p>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight text-gray-900">Overview</h1>
+          <p className="mt-0.5 text-sm text-gray-500">Last 24 hours on every monitored host</p>
+        </div>
       </div>
 
       {backendDown && (
@@ -101,24 +108,9 @@ export function Dashboard() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatsCard
-          title="Total Events"
-          value={eventStats.data?.total_events ?? 0}
-          icon={EyeIcon}
-          loading={eventStats.isLoading}
-          subtitle="Last 24 hours"
-        />
-        <StatsCard
-          title="Suspicious Events"
-          value={eventStats.data?.suspicious_events ?? 0}
-          icon={ExclamationTriangleIcon}
-          loading={eventStats.isLoading}
-          subtitle="Flagged by detection"
-          color="warning"
-        />
-        <StatsCard
-          title="Active Alerts"
+          title="Open alerts"
           value={alertStats.data?.unresolved_alerts ?? 0}
           icon={ShieldCheckIcon}
           loading={alertStats.isLoading}
@@ -126,7 +118,22 @@ export function Dashboard() {
           color={alertColor}
         />
         <StatsCard
-          title="Backend Uptime"
+          title="Suspicious events"
+          value={eventStats.data?.suspicious_events ?? 0}
+          icon={ExclamationTriangleIcon}
+          loading={eventStats.isLoading}
+          subtitle="Flagged by detection"
+          color="warning"
+        />
+        <StatsCard
+          title="Events"
+          value={eventStats.data?.total_events ?? 0}
+          icon={EyeIcon}
+          loading={eventStats.isLoading}
+          subtitle="Last 24 hours"
+        />
+        <StatsCard
+          title="Backend uptime"
           value={health.data ? formatUptime(health.data.uptime_seconds) : 'N/A'}
           icon={ServerIcon}
           loading={health.isLoading}
@@ -135,64 +142,56 @@ export function Dashboard() {
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Panel title="Traffic Over Time" icon={<ChartBarIcon className="h-5 w-5 text-gray-400" />}>
-          <div className="card-content">
-            {traffic.isLoading ? <Loading /> : <TrafficChart data={traffic.data ?? []} />}
-          </div>
-        </Panel>
-        <Panel title="Protocol Distribution" icon={<ChartBarIcon className="h-5 w-5 text-gray-400" />}>
-          <div className="card-content">
-            {eventStats.isLoading ? (
-              <Loading />
-            ) : (
-              <ProtocolChart data={eventStats.data?.protocol_distribution ?? {}} />
-            )}
-          </div>
-        </Panel>
-      </div>
-
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Panel title="Recent Events" icon={<ClockIcon className="h-5 w-5 text-gray-400" />} link="/events">
-          <div className="card-content p-0">
-            <RecentEvents events={recentEvents.data?.items ?? []} />
-          </div>
-        </Panel>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <Panel
-          title="Recent Alerts"
-          icon={<ExclamationTriangleIcon className="h-5 w-5 text-gray-400" />}
+          title="Latest alerts"
+          icon={<ExclamationTriangleIcon className="h-4 w-4 text-red-400" />}
           link="/alerts"
+          className="xl:col-span-2"
         >
-          <div className="card-content p-0">
-            <RecentAlerts alerts={recentAlerts.data?.items ?? []} />
-          </div>
+          <RecentAlerts alerts={recentAlerts.data?.items ?? []} />
         </Panel>
+        <div className="flex flex-col gap-4">
+          <Panel title="System status" icon={<ServerIcon className="h-4 w-4 text-gray-400" />}>
+            <ul className="divide-y divide-gray-200 px-5 py-1">
+              <StatusDot
+                ok={!!health.data?.database}
+                label="Database"
+                detail={health.data?.database ? 'Connected' : 'Disconnected'}
+              />
+              <StatusDot
+                ok={!!health.data?.kernel_module}
+                label="Kernel module"
+                detail={health.data?.kernel_module ? 'Active' : 'Not loaded'}
+              />
+              <StatusDot
+                ok={live.connected}
+                label="Live updates"
+                detail={live.connected ? 'Connected' : live.reconnecting ? 'Reconnecting…' : 'Disconnected'}
+              />
+            </ul>
+          </Panel>
+          <Panel title="Protocols" icon={<ChartBarIcon className="h-4 w-4 text-gray-400" />}>
+            <div className="px-5 py-2">
+              {eventStats.isLoading ? (
+                <Loading />
+              ) : (
+                <ProtocolChart data={eventStats.data?.protocol_distribution ?? {}} />
+              )}
+            </div>
+          </Panel>
+        </div>
       </div>
 
-      <div className="card">
-        <div className="card-header">
-          <h3 className="text-lg font-medium text-gray-900">System Status</h3>
+      <Panel title="Traffic, last 24 hours" icon={<ChartBarIcon className="h-4 w-4 text-gray-400" />}>
+        <div className="px-3 py-4">
+          {traffic.isLoading ? <Loading /> : <TrafficChart data={traffic.data ?? []} />}
         </div>
-        <div className="card-content">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <StatusDot
-              ok={!!health.data?.database}
-              label="Database"
-              detail={health.data?.database ? 'Connected' : 'Disconnected'}
-            />
-            <StatusDot
-              ok={!!health.data?.kernel_module}
-              label="Kernel Module"
-              detail={health.data?.kernel_module ? 'Active' : 'Not loaded'}
-            />
-            <StatusDot
-              ok={live.connected}
-              label="Live Updates"
-              detail={live.connected ? 'Connected' : live.reconnecting ? 'Reconnecting…' : 'Disconnected'}
-            />
-          </div>
-        </div>
-      </div>
+      </Panel>
+
+      <Panel title="Recent events" icon={<ClockIcon className="h-4 w-4 text-gray-400" />} link="/events">
+        <RecentEvents events={recentEvents.data?.items ?? []} />
+      </Panel>
     </div>
   )
 }

@@ -40,7 +40,7 @@ export function Login() {
     <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
       <form
         onSubmit={submit}
-        className="w-full max-w-sm space-y-5 rounded-lg bg-white p-8 shadow"
+        className="w-full max-w-sm space-y-5 rounded-lg bg-surface p-8 shadow"
         aria-label="Sign in"
       >
         <div className="flex items-center space-x-2">
@@ -82,7 +82,7 @@ export function Login() {
         <button
           type="submit"
           disabled={busy}
-          className="w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+          className="w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-400 disabled:opacity-50"
         >
           {busy ? 'Signing in…' : 'Sign in'}
         </button>

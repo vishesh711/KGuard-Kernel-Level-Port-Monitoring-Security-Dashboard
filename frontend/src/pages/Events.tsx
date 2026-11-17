@@ -193,7 +193,7 @@ export function Events() {
                     <th className="px-3 py-2"></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100 bg-white">
+                <tbody className="divide-y divide-gray-100 bg-surface">
                   {events.data.items.map((e) => (
                     <EventRow key={e.id} event={e} host={hostName(e.host_id)} />
                   ))}
