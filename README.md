@@ -15,6 +15,16 @@ shows it all live in a web dashboard.
 kernel module is loaded and nmap and hping3 attack the host from another
 network namespace. Nothing in it is simulated.*
 
+## How it works
+
+![How KGuard works: traffic is seen in the kernel, checked by the backend and shown to you live; you investigate alerts and block attackers, which the kernel then enforces](docs/images/how-it-works.svg)
+
+In short: the kernel module sees every connection attempt on your server and
+stops the obvious attacks itself; the backend looks for the rest and keeps the
+history; you watch the dashboard, look into alerts, and block an address with
+one click, which the kernel then enforces. Nothing is blocked until you turn
+blocking on.
+
 ## What it does
 
 - **Captures in the kernel.** A Netfilter module records every packet that
@@ -36,7 +46,9 @@ network namespace. Nothing in it is simulated.*
   and e-mail alerts, IPFIX flow export, a pcap of the packets around each
   serious alert, PostgreSQL, logins with viewer and admin roles.
 
-![Architecture](docs/images/architecture.svg)
+Inside each part, in more detail:
+
+![Architecture: kernel hooks, per-CPU rings, the agent, the backend services and storage](docs/images/architecture.svg)
 
 How each part works and why it is built that way: [docs/DESIGN.md](docs/DESIGN.md).
 

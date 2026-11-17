@@ -5,7 +5,7 @@ module carries its own version (`KGUARD_MODULE_VERSION`) and event ABI
 version (`KGUARD_ABI_VERSION`). How each item below was verified is in
 [ROADMAP.md](ROADMAP.md), under the item's ID.
 
-## 2.0.0 (unreleased)
+## 2.0.0 (2026-11-17)
 
 A rewrite of nearly every part. 1.0.0 (2025) was a prototype: a kernel
 module that printed events to `/proc/kguard` as text, simple backend rules,

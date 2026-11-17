@@ -1,0 +1,159 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="640" viewBox="0 0 1000 640" font-family="Helvetica, Arial, sans-serif" font-size="13">
+  <title>How KGuard works, and how you use it</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/>
+    </marker>
+    <style>
+      .h1 { font-size: 19px; font-weight: bold; fill: #0f172a; }
+      .h2 { font-size: 15px; font-weight: bold; fill: #0f172a; }
+      .t { fill: #1e293b; }
+      .s { font-size: 12px; fill: #334155; }
+      .num { font-size: 13px; font-weight: bold; fill: #ffffff; }
+      .attacker { fill: #fee2e2; stroke: #dc2626; stroke-width: 1.5; }
+      .kernel { fill: #fef3c7; stroke: #d97706; stroke-width: 1.5; }
+      .backend { fill: #dbeafe; stroke: #2563eb; stroke-width: 1.5; }
+      .you { fill: #dcfce7; stroke: #16a34a; stroke-width: 1.5; }
+      .agent { fill: #f1f5f9; stroke: #64748b; stroke-width: 1.3; stroke-dasharray: 5 4; }
+      .step { fill: #f8fafc; stroke: #94a3b8; stroke-width: 1.2; }
+      .flow { stroke: #475569; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .back { stroke: #dc2626; stroke-width: 2; fill: none; marker-end: url(#arrowred); stroke-dasharray: 7 5; }
+      .flowlabel { font-size: 11.5px; fill: #475569; font-style: italic; }
+      .backlabel { font-size: 12px; fill: #b91c1c; font-weight: bold; }
+    </style>
+  </defs>
+  <rect width="1000" height="640" fill="#ffffff"/>
+
+  <!-- ===== Part 1: what happens to traffic ===== -->
+  <text class="h1" x="24" y="36">How KGuard works</text>
+  <text class="s" x="24" y="56">Every connection attempt to your server is seen in the kernel, checked for attacks, and shown to you live.</text>
+
+  <!-- Attacker / internet -->
+  <rect class="attacker" x="24" y="88" width="160" height="150" rx="10"/>
+  <text class="h2" x="40" y="114">Internet</text>
+  <text class="s" x="40" y="138">normal visitors,</text>
+  <text class="s" x="40" y="156">and attackers:</text>
+  <text class="s" x="40" y="178">• port scans (nmap)</text>
+  <text class="s" x="40" y="196">• SYN floods</text>
+  <text class="s" x="40" y="214">• spoofed addresses</text>
+  <text class="s" x="40" y="232">• password guessing</text>
+
+  <!-- Kernel -->
+  <rect class="kernel" x="232" y="88" width="230" height="150" rx="10"/>
+  <circle cx="254" cy="110" r="12" fill="#d97706"/><text class="num" x="250" y="115">1</text>
+  <text class="h2" x="274" y="115">Your Linux server</text>
+  <text class="t" x="248" y="140" font-weight="bold">kguard kernel module</text>
+  <text class="s" x="248" y="162">• records every connection</text>
+  <text class="s" x="248" y="180">  attempt (in, out, forwarded)</text>
+  <text class="s" x="248" y="198">• spots scans and floods at once</text>
+  <text class="s" x="248" y="216">• blocks attackers in the kernel</text>
+  <text class="s" x="248" y="232">  (only when you turn blocking on)</text>
+
+  <!-- Other servers: agent -->
+  <rect class="agent" x="232" y="262" width="230" height="58" rx="10"/>
+  <text class="t" x="248" y="285" font-weight="bold">More servers (optional)</text>
+  <text class="s" x="248" y="305">kguard-agent (eBPF, no module)</text>
+
+  <!-- Backend -->
+  <rect class="backend" x="510" y="88" width="220" height="232" rx="10"/>
+  <circle cx="532" cy="110" r="12" fill="#2563eb"/><text class="num" x="528" y="115">2</text>
+  <text class="h2" x="552" y="115">KGuard backend</text>
+  <text class="s" x="526" y="140">runs in Docker next to the</text>
+  <text class="s" x="526" y="156">dashboard</text>
+  <text class="s" x="526" y="180">• detects 10 kinds of attack:</text>
+  <text class="s" x="526" y="196">  scan types, brute force, floods,</text>
+  <text class="s" x="526" y="212">  spoofing, amplification, DNS</text>
+  <text class="s" x="526" y="228">  tunnels, bad TLS clients, ...</text>
+  <text class="s" x="526" y="250">• adds context: MITRE technique,</text>
+  <text class="s" x="526" y="266">  country, threat lists</text>
+  <text class="s" x="526" y="288">• keeps history (PostgreSQL)</text>
+  <text class="s" x="526" y="306">• saves the packets (pcap)</text>
+
+  <!-- You -->
+  <rect class="you" x="778" y="88" width="198" height="232" rx="10"/>
+  <circle cx="800" cy="110" r="12" fill="#16a34a"/><text class="num" x="796" y="115">3</text>
+  <text class="h2" x="820" y="115">You</text>
+  <text class="t" x="794" y="140" font-weight="bold">Dashboard (browser)</text>
+  <text class="s" x="794" y="160">• alerts appear live</text>
+  <text class="s" x="794" y="176">• what happened, who, and</text>
+  <text class="s" x="794" y="192">  the evidence behind it</text>
+  <text class="s" x="794" y="208">• hosts, events, processes</text>
+  <text class="t" x="794" y="236" font-weight="bold">Also</text>
+  <text class="s" x="794" y="256">• Slack, Telegram, e-mail</text>
+  <text class="s" x="794" y="272">• Grafana charts</text>
+  <text class="s" x="794" y="288">• viewer and admin logins</text>
+
+  <!-- Flows -->
+  <path class="flow" d="M184,163 L228,163"/>
+  <text class="flowlabel" x="190" y="155">packets</text>
+  <path class="flow" d="M462,140 L506,140"/>
+  <text class="flowlabel" x="466" y="132">events</text>
+  <path class="flow" d="M462,291 L506,291"/>
+  <text class="flowlabel" x="466" y="283">events</text>
+  <path class="flow" d="M730,163 L774,163"/>
+  <text class="flowlabel" x="734" y="155">alerts</text>
+
+  <!-- Response loop: you block, kernel enforces -->
+  <path class="back" d="M877,320 L877,352 L208,352 L208,212 L228,212"/>
+  <text class="backlabel" x="430" y="370">You block an address (for a set time): the kernel and the agents drop its traffic</text>
+
+  <!-- ===== Part 2: how you use it ===== -->
+  <line x1="24" y1="398" x2="976" y2="398" stroke="#e2e8f0" stroke-width="1.5"/>
+  <text class="h1" x="24" y="432">How you use it</text>
+
+  <g>
+    <rect class="step" x="24" y="452" width="178" height="160" rx="10"/>
+    <circle cx="46" cy="476" r="12" fill="#0f172a"/><text class="num" x="42" y="481">1</text>
+    <text class="h2" x="66" y="481">Install</text>
+    <text class="s" x="40" y="506">Load the kernel module</text>
+    <text class="s" x="40" y="524">on your Linux server and</text>
+    <text class="s" x="40" y="542">start the dashboard with</text>
+    <text class="s" x="40" y="560">docker compose.</text>
+    <text class="s" x="40" y="590" fill="#64748b">Starts in monitor-only mode:</text>
+    <text class="s" x="40" y="606" fill="#64748b">nothing is blocked yet.</text>
+  </g>
+  <path class="flow" d="M202,532 L216,532"/>
+
+  <rect class="step" x="218" y="452" width="178" height="160" rx="10"/>
+  <circle cx="240" cy="476" r="12" fill="#0f172a"/><text class="num" x="236" y="481">2</text>
+  <text class="h2" x="260" y="481">Watch</text>
+  <text class="s" x="234" y="506">Log in to the dashboard.</text>
+  <text class="s" x="234" y="524">The overview shows new</text>
+  <text class="s" x="234" y="542">alerts and traffic as they</text>
+  <text class="s" x="234" y="560">happen, or get them in</text>
+  <text class="s" x="234" y="578">Slack, Telegram or e-mail.</text>
+  <path class="flow" d="M396,532 L410,532"/>
+
+  <rect class="step" x="412" y="452" width="178" height="160" rx="10"/>
+  <circle cx="434" cy="476" r="12" fill="#0f172a"/><text class="num" x="430" y="481">3</text>
+  <text class="h2" x="454" y="481">Investigate</text>
+  <text class="s" x="428" y="506">Open an alert: what the</text>
+  <text class="s" x="428" y="524">attacker did, from where,</text>
+  <text class="s" x="428" y="542">the packets as evidence</text>
+  <text class="s" x="428" y="560">(pcap download), and the</text>
+  <text class="s" x="428" y="578">MITRE ATT&amp;CK technique.</text>
+  <path class="flow" d="M590,532 L604,532"/>
+
+  <rect class="step" x="606" y="452" width="178" height="160" rx="10"/>
+  <circle cx="628" cy="476" r="12" fill="#0f172a"/><text class="num" x="624" y="481">4</text>
+  <text class="h2" x="648" y="481">Respond</text>
+  <text class="s" x="622" y="506">Block the source for a</text>
+  <text class="s" x="622" y="524">set time, or allowlist a</text>
+  <text class="s" x="622" y="542">trusted address. Then</text>
+  <text class="s" x="622" y="560">acknowledge or resolve</text>
+  <text class="s" x="622" y="578">the alert.</text>
+  <path class="flow" d="M784,532 L798,532"/>
+
+  <rect class="step" x="800" y="452" width="176" height="160" rx="10"/>
+  <circle cx="822" cy="476" r="12" fill="#0f172a"/><text class="num" x="818" y="481">5</text>
+  <text class="h2" x="842" y="481">Tighten</text>
+  <text class="s" x="816" y="506">When you trust it, turn</text>
+  <text class="s" x="816" y="524">on automatic blocking</text>
+  <text class="s" x="816" y="542">(enforce=1). Add more</text>
+  <text class="s" x="816" y="560">servers with the agent.</text>
+  <text class="s" x="816" y="590" fill="#64748b">Your own addresses are</text>
+  <text class="s" x="816" y="606" fill="#64748b">never blocked.</text>
+</svg>
