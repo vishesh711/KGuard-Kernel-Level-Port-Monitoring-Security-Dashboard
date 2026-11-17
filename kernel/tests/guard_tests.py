@@ -284,29 +284,47 @@ def test_auto_block():
 
 def spoofed_udp(count, pace=0):
     """Send UDP from count different spoofed sources (10.64.0.1 upwards, avoiding the lab's 10.200/16).
-    With pace, pause 20 ms after every pace packets so the receive queue never overflows."""
+    With pace, pause 20 ms after every pace packets so the receive queue never overflows.
+
+    Sent at layer 2 (a packet socket on kgv1), like forge(): through the attacker's own IP stack,
+    each spoofed source became a conntrack entry in the attacker's namespace (kguard enables
+    conntrack in every namespace), and once that table filled, sendto failed with EPERM."""
+    mac = open("/sys/class/net/kgv0/address").read().strip()
     code = f"""
 import socket, struct, time
-raw = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
+dst_mac = bytes.fromhex("{mac}".replace(":", ""))
+src_mac = bytes.fromhex(open("/sys/class/net/kgv1/address").read().strip().replace(":", ""))
+eth = dst_mac + src_mac + b"\\x08\\x00"
+sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
+sock.bind(("kgv1", 0))
 dst = socket.inet_aton("{HOST4}")
+udp = struct.pack("!HHHH", 30000, 9999, 9, 0) + b"x"
+
+def checksum(header):
+    total = sum(struct.unpack("!10H", header))
+    total = (total >> 16) + (total & 0xFFFF)
+    total += total >> 16
+    return ~total & 0xFFFF
+
 for i in range({count}):
     if {pace} and i and i % {pace or 1} == 0:
         time.sleep(0.02)
     src = struct.pack("!I", (10 << 24) + (64 << 16) + i + 1)
-    udp = struct.pack("!HHHH", 30000, 9999, 9, 0) + b"x"
     ip = struct.pack("!BBHHHBBH4s4s", 0x45, 0, 20 + len(udp), 0, 0, 64, 17, 0, src, dst)
+    ip = ip[:10] + struct.pack("!H", checksum(ip)) + ip[12:]
     while True:
         try:
-            raw.sendto(ip + udp, ("{HOST4}", 0))
+            sock.send(eth + ip + udp)
             break
-        except OSError as e:  # ENOBUFS/EAGAIN: the queue is full (fast, KVM-backed VMs); wait for room
+        except OSError as e:  # ENOBUFS/EAGAIN: the device queue is full; wait for room
             if e.errno not in (105, 11):
                 raise
             time.sleep(0.001)
 """
     result = in_ns([sys.executable, "-c", code])
-    if result.returncode:  # show the sender's own error, not just its exit status
-        raise RuntimeError(f"spoofed sender failed: {result.stderr.strip()[-300:]}")
+    if result.returncode:  # the sender's own error (its last line), not just its exit status
+        lines = result.stderr.strip().splitlines()
+        raise RuntimeError(f"spoofed sender failed: {lines[-1] if lines else result.returncode}")
 
 
 def forge(packets):
@@ -412,6 +430,8 @@ def test_source_table_cap():
         objects = slab_objects()
         size = next((int(line.split()[3]) for line in open("/proc/slabinfo")
                      if line.startswith("kguard_src ")), 0)
+        # Counted once, on arrival (spoofed_udp sends at layer 2, so the attacker's own
+        # outgoing copy is no longer counted as well)
         h.check("1,000,000 spoofed sources reach the host (module packet counter)",
                 delivered >= 990_000, f"{delivered} packets seen in {seconds:.0f} s")
         # Near the cap the GC evicts sources idle for 5 s, so a paced flood may never fill the table;
