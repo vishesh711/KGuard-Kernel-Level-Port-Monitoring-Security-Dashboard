@@ -1,17 +1,29 @@
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { TrafficSummary } from '../../types'
 import { format } from 'date-fns'
 import { parseServerDate } from '../../lib/time'
+import { CHART } from './theme'
 
 interface TrafficChartProps {
   data: TrafficSummary[]
 }
 
+const SERIES = [
+  { key: 'total_packets', name: 'Total', color: CHART.blue },
+  { key: 'tcp_packets', name: 'TCP', color: CHART.green },
+  { key: 'udp_packets', name: 'UDP', color: CHART.amber },
+  { key: 'suspicious_activity', name: 'Suspicious', color: CHART.red },
+] as const
+
 export function TrafficChart({ data }: TrafficChartProps) {
-  if (!data || data.length === 0) {
+  const empty = !data || data.length === 0 || data.every((d) => !d.total_packets && !d.suspicious_activity)
+  if (empty) {
     return (
-      <div className="h-64 flex items-center justify-center text-gray-500">
-        <p>No traffic data available</p>
+      <div className="flex h-64 flex-col items-center justify-center gap-1 text-center">
+        <p className="text-sm font-medium text-gray-600">No traffic recorded yet</p>
+        <p className="text-xs text-gray-500">
+          The chart fills in as the kernel module or agents send events.
+        </p>
       </div>
     )
   }
@@ -25,57 +37,46 @@ export function TrafficChart({ data }: TrafficChartProps) {
   return (
     <div className="h-64">
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={chartData}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-          <XAxis dataKey="time" stroke="#6b7280" fontSize={12} tickLine={false} />
-          <YAxis stroke="#6b7280" fontSize={12} tickLine={false} axisLine={false} />
+        <AreaChart data={chartData} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
+          <defs>
+            {SERIES.map((s) => (
+              <linearGradient key={s.key} id={`fill-${s.key}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={s.color} stopOpacity={0.35} />
+                <stop offset="100%" stopColor={s.color} stopOpacity={0} />
+              </linearGradient>
+            ))}
+          </defs>
+          <CartesianGrid stroke={CHART.grid} vertical={false} />
+          <XAxis
+            dataKey="time"
+            stroke={CHART.axis}
+            fontSize={11}
+            tickLine={false}
+            axisLine={false}
+            minTickGap={24}
+          />
+          <YAxis stroke={CHART.axis} fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
           <Tooltip
-            contentStyle={{
-              backgroundColor: '#fff',
-              border: '1px solid #e5e7eb',
-              borderRadius: '6px',
-              boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-            }}
-            labelFormatter={(value, payload) => {
-              if (payload && payload[0]) {
-                return payload[0].payload.fullTime
-              }
-              return value
-            }}
+            contentStyle={CHART.tooltip}
+            labelStyle={{ color: CHART.text }}
+            cursor={{ stroke: CHART.axis, strokeDasharray: '3 3' }}
+            labelFormatter={(value, payload) => (payload && payload[0] ? payload[0].payload.fullTime : value)}
           />
-          <Line
-            type="monotone"
-            dataKey="total_packets"
-            stroke="#3b82f6"
-            strokeWidth={2}
-            dot={false}
-            name="Total Packets"
-          />
-          <Line
-            type="monotone"
-            dataKey="tcp_packets"
-            stroke="#10b981"
-            strokeWidth={2}
-            dot={false}
-            name="TCP"
-          />
-          <Line
-            type="monotone"
-            dataKey="udp_packets"
-            stroke="#f59e0b"
-            strokeWidth={2}
-            dot={false}
-            name="UDP"
-          />
-          <Line
-            type="monotone"
-            dataKey="suspicious_activity"
-            stroke="#ef4444"
-            strokeWidth={2}
-            dot={false}
-            name="Suspicious"
-          />
-        </LineChart>
+          <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12, color: CHART.text }} />
+          {SERIES.map((s) => (
+            <Area
+              key={s.key}
+              type="monotone"
+              dataKey={s.key}
+              name={s.name}
+              stroke={s.color}
+              strokeWidth={2}
+              fill={`url(#fill-${s.key})`}
+              dot={false}
+              activeDot={{ r: 3 }}
+            />
+          ))}
+        </AreaChart>
       </ResponsiveContainer>
     </div>
   )

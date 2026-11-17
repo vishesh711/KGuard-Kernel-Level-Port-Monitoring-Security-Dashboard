@@ -24,7 +24,7 @@ export function Header() {
   const healthStyle = (health.data && HEALTH_STYLES[health.data.status]) || UNKNOWN_HEALTH
 
   return (
-    <div className="sticky top-0 z-40 flex h-16 shrink-0 items-center gap-x-4 border-b border-gray-200 bg-white px-4 shadow-sm sm:gap-x-6 sm:px-6 lg:px-8">
+    <div className="sticky top-0 z-40 flex h-14 shrink-0 items-center gap-x-4 border-b border-gray-200 bg-page/90 px-4 backdrop-blur sm:px-6 lg:px-8">
       {/* Mobile menu button */}
       <button
         type="button"
@@ -35,82 +35,54 @@ export function Header() {
         <Bars3Icon className="h-6 w-6" aria-hidden="true" />
       </button>
 
-      {/* Separator */}
-      <div className="h-6 w-px bg-gray-200 lg:hidden" aria-hidden="true" />
+      <div className="ml-auto flex items-center gap-x-2 sm:gap-x-3">
+        {/* System health */}
+        <span className="inline-flex items-center gap-x-2 rounded-full border border-gray-200 bg-surface px-3 py-1">
+          <span className={`h-2 w-2 rounded-full ${healthStyle.dot}`} aria-hidden="true" />
+          <span className={`text-xs font-medium ${healthStyle.text}`}>{healthStyle.label}</span>
+        </span>
 
-      <div className="flex flex-1 gap-x-4 self-stretch lg:gap-x-6">
-        {/* Page title area */}
-        <div className="flex items-center">
-          <h1 className="text-lg font-semibold text-gray-900">Network Security Monitor</h1>
-        </div>
+        {/* Live updates */}
+        <span className="inline-flex items-center gap-x-2 rounded-full border border-gray-200 bg-surface px-3 py-1">
+          <span
+            className={`h-2 w-2 rounded-full ${live.connected ? 'bg-green-500 animate-pulse-dot' : 'bg-gray-400'}`}
+            aria-hidden="true"
+          />
+          <span className="text-xs font-medium text-gray-600">{live.connected ? 'Live' : 'Offline'}</span>
+        </span>
 
-        {/* Right side */}
-        <div className="ml-auto flex items-center gap-x-4 lg:gap-x-6">
-          {/* System Health Indicator */}
-          <div className="flex items-center space-x-2">
-            <div className={`h-3 w-3 rounded-full ${healthStyle.dot}`}></div>
-            <span className={`text-sm font-medium ${healthStyle.text}`}>{healthStyle.label}</span>
-          </div>
-
-          {/* Alerts notification */}
-          <div className="relative">
-            <Link
-              to="/alerts"
-              className="relative block rounded-full bg-white p-1 text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-            >
-              <span className="sr-only">View notifications</span>
-              <BellIcon className="h-6 w-6" aria-hidden="true" />
-
-              {/* Alert badge */}
-              {activeAlertsCount > 0 && (
-                <div className="absolute -top-1 -right-1">
-                  <span className="inline-flex items-center justify-center h-4 w-4 text-xs font-medium bg-red-600 text-white rounded-full">
-                    {activeAlertsCount > 99 ? '99+' : activeAlertsCount}
-                  </span>
-                </div>
-              )}
-            </Link>
-          </div>
-
-          {/* Separator */}
-          <div className="hidden lg:block lg:h-6 lg:w-px lg:bg-gray-200" aria-hidden="true" />
-
-          {/* Real-time status indicator */}
-          <div className="flex items-center space-x-2">
-            <div className="flex items-center space-x-1">
-              <div
-                className={`h-2 w-2 rounded-full ${
-                  live.connected ? 'bg-green-500 animate-pulse' : 'bg-gray-400'
-                }`}
-              ></div>
-              <span className="text-sm text-gray-600">{live.connected ? 'Live' : 'Offline'}</span>
-            </div>
-          </div>
-
-          {/* Separator */}
-          <div className="hidden lg:block lg:h-6 lg:w-px lg:bg-gray-200" aria-hidden="true" />
-
-          {/* Signed-in user */}
-          {session && (
-            <div className="flex items-center space-x-2">
-              <span className="text-sm text-gray-700">
-                {session.username}{' '}
-                <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
-                  {session.role}
-                </span>
-              </span>
-              <button
-                type="button"
-                onClick={logout}
-                className="rounded p-1 text-gray-400 hover:text-gray-600"
-                title="Sign out"
-              >
-                <span className="sr-only">Sign out</span>
-                <ArrowRightOnRectangleIcon className="h-5 w-5" aria-hidden="true" />
-              </button>
-            </div>
+        {/* Open alerts */}
+        <Link
+          to="/alerts"
+          className="relative rounded-full border border-gray-200 bg-surface p-1.5 text-gray-500 hover:text-gray-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+        >
+          <span className="sr-only">View notifications</span>
+          <BellIcon className="h-5 w-5" aria-hidden="true" />
+          {activeAlertsCount > 0 && (
+            <span className="absolute -right-1.5 -top-1.5 inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white">
+              {activeAlertsCount > 99 ? '99+' : activeAlertsCount}
+            </span>
           )}
-        </div>
+        </Link>
+
+        {/* Signed-in user */}
+        {session && (
+          <div className="ml-1 flex items-center gap-x-2 border-l border-gray-200 pl-3">
+            <span className="text-sm text-gray-700">{session.username}</span>
+            <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+              {session.role}
+            </span>
+            <button
+              type="button"
+              onClick={logout}
+              className="rounded p-1 text-gray-400 hover:text-gray-700"
+              title="Sign out"
+            >
+              <span className="sr-only">Sign out</span>
+              <ArrowRightOnRectangleIcon className="h-5 w-5" aria-hidden="true" />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

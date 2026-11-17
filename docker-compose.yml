@@ -20,6 +20,8 @@ services:
       - SECRET_KEY=${SECRET_KEY:?set SECRET_KEY (openssl rand -hex 32)}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      # Lets agents (and scripts/demo/seed.py) send events
+      - AGENT_ENROLLMENT_KEY=${AGENT_ENROLLMENT_KEY:-}
     depends_on:
       - redis
     # Lets the non-root container user read /proc/kguard. Load the module with

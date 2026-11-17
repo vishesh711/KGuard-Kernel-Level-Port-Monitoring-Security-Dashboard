@@ -8,12 +8,12 @@ interface LayoutProps {
 
 export function Layout({ children }: LayoutProps) {
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-page">
       <Sidebar />
-      <div className="lg:pl-64">
+      <div className="lg:pl-60">
         <Header />
         <main className="py-6">
-          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">{children}</div>
+          <div className="mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-8">{children}</div>
         </main>
       </div>
     </div>

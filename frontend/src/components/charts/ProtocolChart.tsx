@@ -1,66 +1,56 @@
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
+import { CHART } from './theme'
 
 interface ProtocolChartProps {
   data: Record<string, number>
 }
 
-const COLORS = {
-  TCP: '#3b82f6',
-  UDP: '#10b981',
-  ICMP: '#f59e0b',
-  OTHER: '#6b7280',
+const COLORS: Record<string, string> = {
+  TCP: CHART.blue,
+  UDP: CHART.green,
+  ICMP: CHART.amber,
+  ICMPV6: CHART.violet,
 }
 
+/** Share of each protocol, as bars: readable even when one protocol is 99% of the traffic */
 export function ProtocolChart({ data }: ProtocolChartProps) {
-  if (!data || Object.keys(data).length === 0) {
+  const rows = Object.entries(data ?? {})
+    .filter(([, count]) => count > 0)
+    .sort((a, b) => b[1] - a[1])
+  const total = rows.reduce((sum, [, count]) => sum + count, 0)
+
+  if (total === 0) {
     return (
-      <div className="h-64 flex items-center justify-center text-gray-500">
-        <p>No protocol data available</p>
+      <div className="flex h-40 flex-col items-center justify-center gap-1 text-center">
+        <p className="text-sm font-medium text-gray-600">No protocol data yet</p>
+        <p className="text-xs text-gray-500">Shows the mix of TCP, UDP and ICMP once events arrive.</p>
       </div>
     )
   }
 
-  const chartData = Object.entries(data).map(([protocol, count]) => ({
-    name: protocol,
-    value: count,
-    color: COLORS[protocol as keyof typeof COLORS] || COLORS.OTHER,
-  }))
-
-  const total = chartData.reduce((sum, item) => sum + item.value, 0)
-
   return (
-    <div className="h-64">
-      <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
-          <Pie
-            data={chartData}
-            cx="50%"
-            cy="50%"
-            innerRadius={40}
-            outerRadius={80}
-            paddingAngle={2}
-            dataKey="value"
-          >
-            {chartData.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={entry.color} />
-            ))}
-          </Pie>
-          <Tooltip
-            contentStyle={{
-              backgroundColor: '#fff',
-              border: '1px solid #e5e7eb',
-              borderRadius: '6px',
-              boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-            }}
-            formatter={(value: number) => [`${value} (${((value / total) * 100).toFixed(1)}%)`, 'Count']}
-          />
-          <Legend
-            verticalAlign="bottom"
-            height={36}
-            formatter={(value, entry) => <span style={{ color: entry.color }}>{value}</span>}
-          />
-        </PieChart>
-      </ResponsiveContainer>
-    </div>
+    <ul className="flex min-h-[10rem] flex-col justify-center gap-4 py-2">
+      {rows.map(([protocol, count]) => {
+        const share = (count / total) * 100
+        return (
+          <li key={protocol}>
+            <div className="mb-1.5 flex items-baseline justify-between text-sm">
+              <span className="font-medium text-gray-800">{protocol}</span>
+              <span className="font-mono text-xs tabular-nums text-gray-500">
+                {count.toLocaleString()} · {share < 0.1 ? '<0.1' : share.toFixed(1)}%
+              </span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-gray-100">
+              <div
+                className="h-full rounded-full"
+                style={{
+                  width: `${Math.max(share, 1)}%`,
+                  backgroundColor: COLORS[protocol.toUpperCase()] ?? CHART.slate,
+                }}
+              />
+            </div>
+          </li>
+        )
+      })}
+    </ul>
   )
 }

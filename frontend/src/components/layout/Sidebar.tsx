@@ -1,10 +1,10 @@
 import { NavLink } from 'react-router-dom'
 import {
-  HomeIcon,
-  DocumentTextIcon,
+  Squares2X2Icon,
+  BoltIcon,
   ExclamationTriangleIcon,
   ChartBarIcon,
-  CogIcon,
+  Cog6ToothIcon,
   ShieldCheckIcon,
   ServerStackIcon,
   NoSymbolIcon,
@@ -12,56 +12,78 @@ import {
 } from '@heroicons/react/24/outline'
 import { ConnectionStatus } from '../ui/ConnectionStatus'
 
-const navigation = [
-  { name: 'Dashboard', href: '/', icon: HomeIcon },
-  { name: 'Live Events', href: '/events', icon: DocumentTextIcon },
-  { name: 'Security Alerts', href: '/alerts', icon: ExclamationTriangleIcon },
-  { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
-  { name: 'Hosts', href: '/hosts', icon: ServerStackIcon },
-  { name: 'Processes', href: '/processes', icon: CpuChipIcon },
-  { name: 'Blocked', href: '/blocks', icon: NoSymbolIcon },
-  { name: 'Settings', href: '/settings', icon: CogIcon },
+const sections = [
+  {
+    title: 'Monitor',
+    items: [
+      { name: 'Overview', href: '/', icon: Squares2X2Icon },
+      { name: 'Alerts', href: '/alerts', icon: ExclamationTriangleIcon },
+      { name: 'Events', href: '/events', icon: BoltIcon },
+      { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
+    ],
+  },
+  {
+    title: 'Infrastructure',
+    items: [
+      { name: 'Hosts', href: '/hosts', icon: ServerStackIcon },
+      { name: 'Processes', href: '/processes', icon: CpuChipIcon },
+    ],
+  },
+  {
+    title: 'Response',
+    items: [
+      { name: 'Blocked', href: '/blocks', icon: NoSymbolIcon },
+      { name: 'Settings', href: '/settings', icon: Cog6ToothIcon },
+    ],
+  },
 ]
 
 export function Sidebar() {
   return (
-    <div className="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-64 lg:flex-col">
-      <div className="flex grow flex-col gap-y-5 overflow-y-auto bg-white border-r border-gray-200 px-6 pb-4">
+    <div className="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-60 lg:flex-col">
+      <div className="flex grow flex-col overflow-y-auto border-r border-gray-200 bg-sunken px-3 pb-4">
         {/* Logo */}
-        <div className="flex h-16 shrink-0 items-center">
-          <div className="flex items-center space-x-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600">
-              <ShieldCheckIcon className="h-5 w-5 text-white" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-gray-900">KGuard</h1>
-              <p className="text-xs text-gray-500">Security Monitor</p>
-            </div>
+        <div className="flex h-14 shrink-0 items-center gap-x-2.5 px-2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-100 ring-1 ring-primary-300/40">
+            <ShieldCheckIcon className="h-5 w-5 text-primary-400" />
+          </div>
+          <div className="leading-tight">
+            <p className="text-base font-bold tracking-tight text-gray-900">KGuard</p>
+            <p className="text-[11px] uppercase tracking-wider text-gray-500">Security console</p>
           </div>
         </div>
 
-        {/* Navigation */}
-        <nav className="flex flex-1 flex-col">
-          <ul role="list" className="flex flex-1 flex-col gap-y-7">
-            <li>
-              <ul role="list" className="-mx-2 space-y-1">
-                {navigation.map((item) => (
+        <nav className="mt-4 flex flex-1 flex-col gap-y-6">
+          {sections.map((section) => (
+            <div key={section.title}>
+              <p className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                {section.title}
+              </p>
+              <ul role="list" className="space-y-0.5">
+                {section.items.map((item) => (
                   <li key={item.name}>
                     <NavLink
                       to={item.href}
+                      end={item.href === '/'}
                       className={({ isActive }) =>
-                        `group flex gap-x-3 rounded-md p-2 text-sm leading-6 font-semibold transition-colors ${
+                        `group relative flex items-center gap-x-3 rounded-md px-2 py-1.5 text-sm font-medium transition-colors ${
                           isActive
-                            ? 'bg-blue-50 text-blue-700'
-                            : 'text-gray-700 hover:text-blue-700 hover:bg-gray-50'
+                            ? 'bg-gray-100 text-gray-900'
+                            : 'text-gray-600 hover:bg-gray-100/60 hover:text-gray-900'
                         }`
                       }
                     >
                       {({ isActive }) => (
                         <>
+                          {isActive && (
+                            <span
+                              className="absolute inset-y-1 left-0 w-0.5 rounded-full bg-primary-400"
+                              aria-hidden="true"
+                            />
+                          )}
                           <item.icon
-                            className={`h-6 w-6 shrink-0 ${
-                              isActive ? 'text-blue-700' : 'text-gray-400 group-hover:text-blue-700'
+                            className={`h-5 w-5 shrink-0 ${
+                              isActive ? 'text-primary-400' : 'text-gray-400 group-hover:text-gray-600'
                             }`}
                             aria-hidden="true"
                           />
@@ -72,13 +94,12 @@ export function Sidebar() {
                   </li>
                 ))}
               </ul>
-            </li>
+            </div>
+          ))}
 
-            {/* Connection Status */}
-            <li className="mt-auto">
-              <ConnectionStatus />
-            </li>
-          </ul>
+          <div className="mt-auto px-1">
+            <ConnectionStatus />
+          </div>
         </nav>
       </div>
     </div>
